@@ -1,0 +1,22 @@
+# Android
+*.iml
+.gradle/
+.idea/
+local.properties
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+
+!dist/*.apk
+
+# Signing (never commit)
+signing/
+*.jks
+*.keystore
+keystore.properties
+
+# Runtime
+*.log

@@ -1,0 +1,64 @@
+package com.xiaocheng.app.data
+
+import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
+
+/** 所有本地配置与轻量数据都存在 SharedPreferences 里，避免引入数据库依赖。 */
+class Prefs(context: Context) {
+    private val sp = context.getSharedPreferences("xiaocheng_prefs", Context.MODE_PRIVATE)
+
+    var userName: String
+        get() = sp.getString("user_name", "") ?: ""
+        set(value) { sp.edit().putString("user_name", value).apply() }
+
+    var apiBase: String
+        get() = sp.getString("api_base", "https://api.deepseek.com/v1") ?: ""
+        set(value) { sp.edit().putString("api_base", value).apply() }
+
+    var apiKey: String
+        get() = sp.getString("api_key", "") ?: ""
+        set(value) { sp.edit().putString("api_key", value).apply() }
+
+    var apiModel: String
+        get() = sp.getString("api_model", "deepseek-chat") ?: ""
+        set(value) { sp.edit().putString("api_model", value).apply() }
+
+    var seeded: Boolean
+        get() = sp.getBoolean("seeded", false)
+        set(value) { sp.edit().putBoolean("seeded", value).apply() }
+
+    fun loadEvents(): List<ScheduleEvent> {
+        val raw = sp.getString("events", "[]") ?: "[]"
+        return runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).map { ScheduleEvent.fromJson(arr.getJSONObject(it)) }
+        }.getOrDefault(emptyList())
+    }
+
+    fun saveEvents(events: List<ScheduleEvent>) {
+        val arr = JSONArray()
+        events.forEach { arr.put(it.toJson()) }
+        sp.edit().putString("events", arr.toString()).apply()
+    }
+
+    /** 每个通知页保存一份条目指纹快照，用于手动刷新时对比新增。 */
+    fun loadSnapshot(url: String): Set<String>? {
+        val raw = sp.getString("snapshots", "{}") ?: "{}"
+        val obj = runCatching { JSONObject(raw) }.getOrNull() ?: return null
+        if (!obj.has(url)) return null
+        val arr = obj.optJSONArray(url) ?: return null
+        return (0 until arr.length()).map { arr.optString(it) }.toSet()
+    }
+
+    fun saveSnapshot(url: String, keys: Set<String>) {
+        val raw = sp.getString("snapshots", "{}") ?: "{}"
+        val obj = runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+        obj.put(url, JSONArray(keys.toList()))
+        sp.edit().putString("snapshots", obj.toString()).apply()
+    }
+
+    fun clearAll() {
+        sp.edit().clear().apply()
+    }
+}
