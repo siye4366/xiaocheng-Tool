@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -121,10 +122,19 @@ fun HomeScreen(vm: MainViewModel) {
     }
 
     val upcoming = remember(events, now) {
-        events.filter { !it.isOverdue(now) }.sortedBy { it.keyTime ?: Long.MAX_VALUE }
+        events.filter { !it.isOverdue(now) }.sortedWith(
+            compareBy<ScheduleEvent>(
+                { it.sortTime(now) ?: Long.MAX_VALUE },
+                { if (it.sortIsDeadline(now)) 0 else 1 },
+                { it.title },
+            )
+        )
     }
     val expired = remember(events, now) {
-        events.filter { it.isOverdue(now) }.sortedByDescending { it.keyTime ?: 0L }
+        events.filter { it.isOverdue(now) }.sortedWith(
+            compareByDescending<ScheduleEvent> { it.sortTime(now) ?: Long.MIN_VALUE }
+                .thenBy { if (it.sortIsDeadline(now)) 0 else 1 }
+        )
     }
     val todayCount = events.count { !it.done && it.keyTime?.let { t -> isToday(t, now) } == true }
     val allSelected = events.isNotEmpty() && selectedIds.size == events.size
@@ -232,6 +242,10 @@ fun HomeScreen(vm: MainViewModel) {
                             vm.markDone(selectedIds)
                             exitSelection()
                         },
+                        onMarkUndone = {
+                            vm.markUndone(selectedIds)
+                            exitSelection()
+                        },
                         onDelete = { confirmDelete = true },
                     )
                 }
@@ -304,7 +318,12 @@ private fun SelectionHeader(
 }
 
 @Composable
-private fun SelectionActions(count: Int, onMarkDone: () -> Unit, onDelete: () -> Unit) {
+private fun SelectionActions(
+    count: Int,
+    onMarkDone: () -> Unit,
+    onMarkUndone: () -> Unit,
+    onDelete: () -> Unit,
+) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(22.dp),
@@ -322,7 +341,17 @@ private fun SelectionActions(count: Int, onMarkDone: () -> Unit, onDelete: () ->
             ) {
                 Icon(Icons.Filled.Done, null, tint = if (count > 0) Paper else Muted, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("标记完成", color = if (count > 0) Paper else Muted, fontSize = 14.sp)
+                Text("完成", color = if (count > 0) Paper else Muted, fontSize = 14.sp)
+            }
+            Box(Modifier.width(1.dp).height(24.dp).background(Color(0xFF3B4B45)))
+            TextButton(
+                onClick = onMarkUndone,
+                enabled = count > 0,
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.Filled.Refresh, null, tint = if (count > 0) Paper else Muted, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("取消标记", color = if (count > 0) Paper else Muted, fontSize = 13.sp)
             }
             Box(Modifier.width(1.dp).height(24.dp).background(Color(0xFF3B4B45)))
             TextButton(
@@ -431,24 +460,29 @@ private fun EventCard(
                     if (done) {
                         CountdownBadge("已完成", Muted, Line.copy(alpha = 0.55f))
                     } else {
-                        event.startAt?.let {
-                            CountdownBadge(
-                                startCountdownText(it, now),
-                                if (expired) Muted else Pine,
-                                if (expired) Line.copy(alpha = 0.5f) else SoftPine,
-                            )
+                        val times = listOfNotNull(
+                            event.startAt?.let { it to false },
+                            event.deadlineAt?.let { it to true },
+                        ).sortedWith(compareBy({ it.first }, { if (it.second) 0 else 1 }))
+                        times.forEach { pair ->
+                            val at = pair.first
+                            val isDeadline = pair.second
+                            if (isDeadline) {
+                                CountdownBadge(
+                                    deadlineCountdownText(at, now),
+                                    if (expired) Muted else Coral,
+                                    if (expired) Line.copy(alpha = 0.55f) else SoftCoral,
+                                    bold = true,
+                                )
+                            } else {
+                                CountdownBadge(
+                                    startCountdownText(at, now),
+                                    if (expired) Muted else Pine,
+                                    if (expired) Line.copy(alpha = 0.5f) else SoftPine,
+                                )
+                            }
                         }
-                        event.deadlineAt?.let {
-                            CountdownBadge(
-                                deadlineCountdownText(it, now),
-                                if (expired) Muted else Coral,
-                                if (expired) Line.copy(alpha = 0.55f) else SoftCoral,
-                                bold = true,
-                            )
-                        }
-                        if (event.startAt == null && event.deadlineAt == null) {
-                            CountdownBadge("待补充时间", Amber, SoftAmber)
-                        }
+                        if (times.isEmpty()) CountdownBadge("待补充时间", Amber, SoftAmber)
                     }
                 }
                 Spacer(Modifier.height(7.dp))

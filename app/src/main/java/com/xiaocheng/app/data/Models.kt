@@ -19,14 +19,52 @@ data class ScheduleEvent(
     val createdAt: Long = System.currentTimeMillis(),
     var updatedAt: Long = System.currentTimeMillis(),
 ) {
-    /** 用于排序、判断是否到期的时间：优先截止时间。 */
+    /** 用于展示“今天”等统计的参考时间：优先截止时间。 */
     val keyTime: Long? get() = deadlineAt ?: startAt
 
-    fun isOverdue(now: Long = System.currentTimeMillis()): Boolean {
+    /**
+     * 是否归入「已到期」。
+     * 规则：开始和截止都过去才算过期；如果截止已过但活动还没开始，仍放在未到期，
+     * 避免“报名截止了，但活动还没开始”被提前归档。
+     */
+    fun isExpired(now: Long = System.currentTimeMillis()): Boolean {
         if (done) return true
-        val t = keyTime ?: return false
-        return t < now
+        val s = startAt
+        val d = deadlineAt
+        return when {
+            s != null && d != null -> s < now && d < now
+            s != null -> s < now
+            d != null -> d < now
+            else -> false
+        }
     }
+
+    fun isOverdue(now: Long = System.currentTimeMillis()): Boolean = isExpired(now)
+
+    /** 未到期时取最近的未来时间；已到期时取最近的过去时间。 */
+    fun nextTimePoint(now: Long): EventTimePoint? {
+        val points = buildList {
+            startAt?.let { add(EventTimePoint(it, false)) }
+            deadlineAt?.let { add(EventTimePoint(it, true)) }
+        }.filter { it.at >= now }
+        return points.sortedWith(compareBy({ it.at }, { if (it.isDeadline) 0 else 1 })).firstOrNull()
+    }
+
+    fun lastTimePoint(now: Long): EventTimePoint? {
+        val points = buildList {
+            startAt?.let { add(EventTimePoint(it, false)) }
+            deadlineAt?.let { add(EventTimePoint(it, true)) }
+        }.filter { it.at < now }
+        return points.sortedWith(
+            compareByDescending<EventTimePoint> { it.at }.thenBy { if (it.isDeadline) 0 else 1 }
+        ).firstOrNull()
+    }
+
+    fun sortTime(now: Long = System.currentTimeMillis()): Long? =
+        if (!isExpired(now)) nextTimePoint(now)?.at else lastTimePoint(now)?.at
+
+    fun sortIsDeadline(now: Long = System.currentTimeMillis()): Boolean =
+        if (!isExpired(now)) nextTimePoint(now)?.isDeadline == true else lastTimePoint(now)?.isDeadline == true
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -60,6 +98,8 @@ data class ScheduleEvent(
         )
     }
 }
+
+data class EventTimePoint(val at: Long, val isDeadline: Boolean)
 
 private fun JSONObject.optLongOrNull(key: String): Long? {
     if (!has(key) || isNull(key)) return null

@@ -1,6 +1,8 @@
 package com.xiaocheng.app.ai
 
 import com.xiaocheng.app.data.ExtractedEvent
+import com.xiaocheng.app.data.NoticeItem
+import com.xiaocheng.app.net.PageLink
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -17,6 +19,8 @@ import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 
 data class LlmConfig(val baseUrl: String, val apiKey: String, val model: String)
+
+data class ChatTurn(val role: String, val content: String)
 
 /** 调用 OpenAI 兼容的 Chat Completions 接口，把非结构化文本转成事件 JSON。 */
 class LlmClient {
@@ -55,6 +59,180 @@ class LlmClient {
             }
             parseResponse(raw)
         }
+
+    /** 综合版对话：system + 最近历史 + 当前消息，返回模型原始文本（约定为 JSON）。 */
+    suspend fun chat(
+        config: LlmConfig,
+        systemPrompt: String,
+        history: List<ChatTurn>,
+        userMessage: String,
+    ): String = withContext(Dispatchers.IO) {
+        if (config.apiKey.isBlank()) throw IOException("未配置 API Key")
+        val messages = org.json.JSONArray()
+        messages.put(JSONObject().put("role", "system").put("content", systemPrompt))
+        history.takeLast(12).forEach {
+            messages.put(JSONObject().put("role", it.role).put("content", it.content))
+        }
+        messages.put(JSONObject().put("role", "user").put("content", userMessage))
+        val body = JSONObject().apply {
+            put("model", config.model)
+            put("temperature", 0.3)
+            put("max_tokens", 700)
+            put("messages", messages)
+        }
+        postChat(endpointOf(config.baseUrl), config, body)
+    }
+
+    /** 让模型整理一个网页上的通知/活动条目。 */
+    suspend fun digestNotices(
+        config: LlmConfig,
+        pageUrl: String,
+        pageTitle: String,
+        pageText: String,
+        links: List<PageLink>,
+        query: String,
+    ): List<NoticeItem> = withContext(Dispatchers.IO) {
+        if (config.apiKey.isBlank()) throw IOException("未配置 API Key")
+        val linkText = links.take(80).joinToString("\n") { "- " + it.title.take(100) + " | " + it.url }
+        val user = "页面标题：" + pageTitle +
+            "\n页面地址：" + pageUrl +
+            "\n用户想找：" + (query.ifBlank { "最近的通知、活动、讲座、竞赛、截止日期等" }) +
+            "\n\n页面正文（可能不完整）：\n" + pageText.take(6000) +
+            "\n\n页面上的链接：\n" + linkText
+        val system = """你是校园通知整理助手。请从给定网页正文和链接中，找出用户关心的通知/活动条目。
+只输出严格 JSON，不要输出解释或 Markdown：
+{"items":[{"title":"条目标题","url":"绝对链接或空字符串","date":"页面上的日期线索或空字符串","summary":"一句话说明"}]}
+规则：
+1. 只收录确实出现在页面中的条目，不要编造。
+2. 优先保留有明确标题的条目；忽略导航、登录、页脚、广告。
+3. url 必须来自给定链接列表，或能从页面地址推导；不确定就留空。
+4. 最多 30 条。"""
+        val body = JSONObject().apply {
+            put("model", config.model)
+            put("temperature", 0.1)
+            put("max_tokens", 1600)
+            put("response_format", JSONObject().put("type", "json_object"))
+            put("messages", org.json.JSONArray().apply {
+                put(JSONObject().put("role", "system").put("content", system))
+                put(JSONObject().put("role", "user").put("content", user))
+            })
+        }
+        val content = postChat(endpointOf(config.baseUrl), config, body)
+        val json = extractJsonObject(content)
+        val arr = json.optJSONArray("items") ?: org.json.JSONArray()
+        val out = ArrayList<NoticeItem>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val title = o.optString("title").trim()
+            if (title.isBlank()) continue
+            val link = resolveUrl(pageUrl, o.optString("url").trim())
+            out.add(NoticeItem(title, link, o.optString("date").trim()))
+        }
+        out
+    }
+
+    /** 查询接口额度，支持 DeepSeek / 部分 OpenAI 兼容服务；不支持时抛错。 */
+    suspend fun fetchBalance(config: LlmConfig): String = withContext(Dispatchers.IO) {
+        if (config.apiKey.isBlank()) throw IOException("未配置 API Key")
+        val root = config.baseUrl.trim().trimEnd('/')
+            .removeSuffix("/chat/completions")
+            .removeSuffix("/v1")
+        val urls = listOf(root + "/user/balance", root + "/dashboard/billing/credit_grants")
+        var lastError = ""
+        for (url in urls) {
+            try {
+                val req = Request.Builder()
+                    .url(url)
+                    .addHeader("Authorization", "Bearer " + config.apiKey)
+                    .get()
+                    .build()
+                http.newCall(req).execute().use { resp ->
+                    val text = resp.body?.string().orEmpty()
+                    if (!resp.isSuccessful) {
+                        lastError = "HTTP " + resp.code
+                        return@use
+                    }
+                    val formatted = formatBalance(text)
+                    if (formatted != null) return@withContext formatted
+                    lastError = "接口返回格式无法识别"
+                }
+            } catch (e: Exception) {
+                lastError = e.message ?: "网络错误"
+            }
+        }
+        throw IOException(lastError.ifBlank { "该接口不支持额度查询" })
+    }
+
+    suspend fun testConnection(config: LlmConfig): String = withContext(Dispatchers.IO) {
+        if (config.apiKey.isBlank()) throw IOException("未配置 API Key")
+        val root = config.baseUrl.trim().trimEnd('/')
+            .removeSuffix("/chat/completions")
+            .removeSuffix("/v1")
+        val req = Request.Builder()
+            .url(root + "/models")
+            .addHeader("Authorization", "Bearer " + config.apiKey)
+            .get()
+            .build()
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                throw IOException("接口返回 " + resp.code + "：" + resp.body?.string().orEmpty().take(160))
+            }
+        }
+        "连接正常"
+    }
+
+    private fun postChat(endpoint: String, config: LlmConfig, body: JSONObject): String {
+        val req = Request.Builder()
+            .url(endpoint)
+            .addHeader("Authorization", "Bearer " + config.apiKey)
+            .addHeader("Content-Type", "application/json")
+            .post(body.toString().toRequestBody(JSON))
+            .build()
+        return http.newCall(req).execute().use { resp ->
+            val raw = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                throw IOException("接口返回 " + resp.code + "：" + raw.take(240))
+            }
+            val choices = JSONObject(raw).optJSONArray("choices")
+                ?: throw IOException("接口返回缺少 choices")
+            if (choices.length() == 0) throw IOException("接口返回为空")
+            choices.getJSONObject(0).optJSONObject("message")?.optString("content").orEmpty()
+                .ifBlank { throw IOException("模型没有返回内容") }
+        }
+    }
+
+    private fun formatBalance(raw: String): String? {
+        val root = runCatching { JSONObject(raw) }.getOrNull() ?: return null
+        if (root.has("balance_infos")) {
+            val arr = root.optJSONArray("balance_infos") ?: return null
+            val parts = ArrayList<String>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val currency = o.optString("currency", "")
+                val total = o.optString("total_balance", "")
+                val granted = o.optString("granted_balance", "")
+                val topped = o.optString("topped_up_balance", "")
+                if (total.isNotBlank()) {
+                    var one = "余额 " + total + " " + currency
+                    if (topped.isNotBlank()) one += "（充值 " + topped + "）"
+                    if (granted.isNotBlank()) one += "（赠金 " + granted + "）"
+                    parts.add(one.trim())
+                }
+            }
+            if (parts.isNotEmpty()) return parts.joinToString("；")
+        }
+        val available = root.optDouble("total_available", Double.NaN)
+        if (!available.isNaN()) {
+            val used = root.optDouble("total_used", Double.NaN)
+            return "可用额度 " + available + (if (used.isNaN()) "" else "（已用 " + used + "）")
+        }
+        return null
+    }
+
+    private fun resolveUrl(pageUrl: String, link: String): String {
+        if (link.isBlank()) return ""
+        return runCatching { java.net.URI(pageUrl).resolve(link).toString() }.getOrDefault(link)
+    }
 
     private fun endpointOf(base: String): String {
         val b = base.trim().trimEnd('/')

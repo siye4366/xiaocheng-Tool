@@ -38,6 +38,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -84,27 +85,64 @@ private const val EXAMPLE = "【讲座通知】人工智能前沿讲座\n" +
 
 @Composable
 fun AiScreen(vm: MainViewModel) {
-    var mode by remember { mutableIntStateOf(0) }
-    var text by remember { mutableStateOf("") }
-    var url by remember { mutableStateOf("") }
-    var updateUrl by remember { mutableStateOf("") }
-    val ai = vm.aiState
-    val update = vm.updateState
-
     Column(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp)
             .imePadding(),
     ) {
-        Spacer(Modifier.height(12.dp))
-        ScreenTitle("AI 提取", "粘贴一段通知，校程帮你拆成日期、地点和截止时间。")
-        Spacer(Modifier.height(12.dp))
-        EngineChip(vm.hasApiKey, vm.apiModel)
-        Spacer(Modifier.height(16.dp))
+        AiHeader(vm)
+        if (vm.aiMode == "combined" && vm.hasApiKey && !vm.effectiveLocal) {
+            CombinedChat(vm, Modifier.weight(1f))
+        } else {
+            ClassicAiContent(vm, Modifier.weight(1f))
+        }
+    }
+}
 
+@Composable
+private fun AiHeader(vm: MainViewModel) {
+    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+        Spacer(Modifier.height(8.dp))
+        ScreenTitle("AI 助手", "整理通知，或直接和日程助手对话。")
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            EngineChip(
+                configured = vm.hasApiKey && !vm.effectiveLocal,
+                model = vm.apiModel,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                if (vm.effectiveLocal) "本地规则" else "大模型",
+                style = MaterialTheme.typography.labelMedium,
+                color = Muted,
+            )
+            Spacer(Modifier.width(6.dp))
+            Switch(
+                checked = vm.effectiveLocal,
+                onCheckedChange = { vm.switchEngine(it) },
+                enabled = vm.hasApiKey,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun ClassicAiContent(vm: MainViewModel, modifier: Modifier = Modifier) {
+    var mode by remember { mutableIntStateOf(0) }
+    var text by remember { mutableStateOf("") }
+    var url by remember { mutableStateOf("") }
+    var updateUrl by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }
+    val ai = vm.aiState
+    val update = vm.updateState
+
+    Column(
+        modifier = modifier
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp),
+    ) {
         SourceTabs(mode) { mode = it }
         Spacer(Modifier.height(14.dp))
 
@@ -125,8 +163,11 @@ fun AiScreen(vm: MainViewModel) {
             else -> UpdateSource(
                 url = updateUrl,
                 onUrlChange = { updateUrl = it },
+                query = query,
+                onQueryChange = { query = it },
                 loading = update.loading,
-                onCheck = { vm.checkUpdates(updateUrl.trim()) },
+                onCheck = { vm.checkUpdates(updateUrl.trim(), query.trim()) },
+                aiEnabled = vm.hasApiKey && !vm.effectiveLocal,
             )
         }
 
@@ -147,7 +188,7 @@ fun AiScreen(vm: MainViewModel) {
             ResultSection(ai.results, ai.engine, ai.sourceLabel, onSaveAll = { vm.saveAllExtracted() }, onSaveOne = { vm.saveOne(it) })
         } else if (ai.loading && mode != 2) {
             Spacer(Modifier.height(16.dp))
-            LoadingCard(if (vm.hasApiKey) "大模型正在阅读通知…" else "正在用本地规则抽取…")
+            LoadingCard(if (vm.hasApiKey && !vm.effectiveLocal) "大模型正在阅读通知…" else "正在用本地规则抽取…")
         }
         if (mode == 2 && (update.items.isNotEmpty() || update.error != null || update.firstRun)) {
             Spacer(Modifier.height(14.dp))
@@ -230,7 +271,7 @@ private fun TextSource(text: String, onTextChange: (String) -> Unit, loading: Bo
                 Text(if (loading) "抽取中…" else "开始提取", fontWeight = FontWeight.SemiBold)
             }
             Spacer(Modifier.height(8.dp))
-            Text("未配置大模型时使用本地规则，同样可以离线抽取常见中文时间表达。", style = MaterialTheme.typography.labelSmall, color = Muted)
+            Text("接入大模型后会优先用大模型；未配置或手动切回本地时，使用离线规则。", style = MaterialTheme.typography.labelSmall, color = Muted)
         }
     }
 }
@@ -279,7 +320,15 @@ private fun LinkSource(url: String, onUrlChange: (String) -> Unit, loading: Bool
 }
 
 @Composable
-private fun UpdateSource(url: String, onUrlChange: (String) -> Unit, loading: Boolean, onCheck: () -> Unit) {
+private fun UpdateSource(
+    url: String,
+    onUrlChange: (String) -> Unit,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    loading: Boolean,
+    onCheck: () -> Unit,
+    aiEnabled: Boolean,
+) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(22.dp),
@@ -289,13 +338,29 @@ private fun UpdateSource(url: String, onUrlChange: (String) -> Unit, loading: Bo
         Column(modifier = Modifier.padding(16.dp)) {
             Text("学校通知页 · 手动检查更新", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(4.dp))
-            Text("第一次检查会保存页面条目快照；以后每次点击，只列出新增条目。不常驻后台。", style = MaterialTheme.typography.bodySmall, color = Muted)
+            Text(
+                if (aiEnabled) "接入 AI 后，会先读页面和链接再整理；动态页面会尝试在线阅读器。第一次检查会建立快照。"
+                else "第一次检查会保存页面条目快照；以后每次点击，只列出新增条目。不常驻后台。",
+                style = MaterialTheme.typography.bodySmall,
+                color = Muted,
+            )
             Spacer(Modifier.height(14.dp))
             OutlinedTextField(
                 value = url,
                 onValueChange = onUrlChange,
                 label = { Text("公开通知页链接") },
                 placeholder = { Text("https://www.example.edu.cn/notice/") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Pine, unfocusedBorderColor = Line, focusedContainerColor = CardWhite, unfocusedContainerColor = CardWhite, cursorColor = Pine),
+            )
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                label = { Text("筛选关键词（可选）") },
+                placeholder = { Text("例如：竞赛、讲座、最近一周") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
@@ -316,7 +381,7 @@ private fun UpdateSource(url: String, onUrlChange: (String) -> Unit, loading: Bo
                     Icon(Icons.Filled.Refresh, null, tint = CardWhite, modifier = Modifier.size(17.dp))
                     Spacer(Modifier.width(8.dp))
                 }
-                Text(if (loading) "检查中…" else "检查更新", fontWeight = FontWeight.SemiBold)
+                Text(if (loading) "整理中…" else if (aiEnabled) "AI 整理并检查" else "检查更新", fontWeight = FontWeight.SemiBold)
             }
         }
     }
@@ -328,6 +393,16 @@ private fun UpdateResult(vm: MainViewModel, update: com.xiaocheng.app.UpdateUiSt
         if (update.error != null) {
             MessageCard(update.error, Coral, SoftCoral, Icons.Filled.Warning)
             return
+        }
+        if (update.engine.isNotBlank() || update.pageTitle.isNotBlank()) {
+            Text(
+                "来源：" + update.engine +
+                    (if (update.readerUsed) " · 动态渲染" else "") +
+                    (if (update.pageTitle.isNotBlank()) " · " + update.pageTitle else ""),
+                style = MaterialTheme.typography.labelSmall,
+                color = Muted,
+            )
+            Spacer(Modifier.height(6.dp))
         }
         if (update.firstRun) {
             MessageCard("已建立首次快照，共识别 " + update.total + " 条。下次检查只显示新增条目，下面可以先试提取。", Pine, SoftPine, Icons.Filled.CheckCircle)
@@ -348,6 +423,7 @@ private fun UpdateResult(vm: MainViewModel, update: com.xiaocheng.app.UpdateUiSt
 
 @Composable
 private fun NoticeRow(item: NoticeItem, loading: Boolean, onExtract: () -> Unit) {
+    val canExtract = item.url.isNotBlank()
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -363,8 +439,8 @@ private fun NoticeRow(item: NoticeItem, loading: Boolean, onExtract: () -> Unit)
                 }
             }
             Spacer(Modifier.width(8.dp))
-            TextButton(onClick = onExtract, enabled = !loading) {
-                Text("提取", color = Pine, fontSize = 13.sp)
+            TextButton(onClick = onExtract, enabled = !loading && canExtract) {
+                Text(if (canExtract) "提取" else "无链接", color = if (canExtract) Pine else Muted, fontSize = 13.sp)
             }
         }
     }

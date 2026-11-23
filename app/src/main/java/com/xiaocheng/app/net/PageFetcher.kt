@@ -14,6 +14,15 @@ import java.util.concurrent.TimeUnit
 
 data class Article(val title: String, val text: String, val url: String)
 
+data class PageLink(val title: String, val url: String)
+
+data class PageContent(
+    val title: String,
+    val text: String,
+    val links: List<PageLink>,
+    val usedReader: Boolean = false,
+)
+
 /** 只抓取用户主动提交的公开页面，不登录、不批量爬取。 */
 class PageFetcher {
 
@@ -23,7 +32,45 @@ class PageFetcher {
         .followRedirects(true)
         .build()
 
+    private val readerHttp = OkHttpClient.Builder()
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .build()
+
     private val dateHintRegex = Regex("""(20[0-9]{2}[-./年][0-9]{1,2}[-./月][0-9]{1,2}日?|[0-9]{1,2}[-./][0-9]{1,2})""")
+
+    /** 抓取一个网页的正文和链接；动态页面在内容过少时尝试 r.jina.ai 阅读器渲染。 */
+    suspend fun fetchPageContent(rawUrl: String): PageContent = withContext(Dispatchers.IO) {
+        val url = normalize(rawUrl)
+        var directError: Exception? = null
+        try {
+            val html = fetch(url)
+            val doc = Jsoup.parse(html, url)
+            val title = cleanTitle(
+                doc.selectFirst("meta[property=og:title]")?.attr("content").orEmpty()
+                    .ifBlank { doc.title() }
+            )
+            doc.select("script, style, noscript, svg, iframe, nav, footer, header").remove()
+            val body = readableBody(doc) ?: doc.body()
+            val text = body.text().replace(Regex("""\s+"""), " ").trim()
+            val navWords = setOf("首页", "上一页", "下一页", "尾页", "更多", "返回", "登录", "注册", "English")
+            val links = doc.select("a[href]").mapNotNull { a ->
+                val t = a.text().replace(Regex("""\s+"""), " ").trim()
+                if (t.length !in 2..100 || t in navWords) return@mapNotNull null
+                val abs = a.absUrl("href").ifBlank { a.attr("href") }
+                if (!abs.startsWith("http")) return@mapNotNull null
+                PageLink(t, abs)
+            }.distinctBy { it.url }.take(120)
+            if (text.length >= 120 || links.size >= 3) {
+                return@withContext PageContent(title, text.take(14000), links, false)
+            }
+            return@withContext fetchReader(url) ?: PageContent(title, text, links, false)
+        } catch (e: Exception) {
+            directError = e
+        }
+        fetchReader(url) ?: throw directError ?: IOException("页面内容为空")
+    }
 
     suspend fun fetchArticle(rawUrl: String): Article = withContext(Dispatchers.IO) {
         val url = normalize(rawUrl)
@@ -94,6 +141,32 @@ class PageFetcher {
             val linkLen = el.select("a").sumOf { it.text().trim().length }
             total - linkLen * 2
         } ?: doc.body()
+    }
+
+    private fun fetchReader(url: String): PageContent? {
+        return try {
+            val req = Request.Builder()
+                .url("https://r.jina.ai/" + url)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36")
+                .build()
+            val raw = readerHttp.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                resp.body?.string().orEmpty()
+            }.trim()
+            if (raw.length < 80) return null
+            val title = raw.lineSequence()
+                .firstOrNull { it.startsWith("# ") }
+                ?.removePrefix("# ")?.trim().orEmpty()
+            val links = Regex("""\[([^\]]{2,120})\]\((https?://[^)\s]+)\)""")
+                .findAll(raw)
+                .map { PageLink(it.groupValues[1].trim(), it.groupValues[2].trim()) }
+                .distinctBy { it.url }
+                .take(100)
+                .toList()
+            PageContent(title.ifBlank { "网页内容" }, raw.take(14000), links, true)
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun cleanTitle(raw: String): String {

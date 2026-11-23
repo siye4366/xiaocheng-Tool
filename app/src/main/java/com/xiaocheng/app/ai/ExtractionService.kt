@@ -9,10 +9,10 @@ class ExtractionService(private val prefs: Prefs) {
 
     private val llm = LlmClient()
 
-    suspend fun extract(text: String, titleHint: String? = null): ExtractionResult {
+    suspend fun extract(text: String, titleHint: String? = null, forceLocal: Boolean = false): ExtractionResult {
         val local = LocalExtractor.extract(text, titleHint = titleHint)
         val key = prefs.apiKey.trim()
-        if (key.isBlank()) {
+        if (key.isBlank() || forceLocal) {
             return ExtractionResult(local, "本地规则")
         }
         return try {

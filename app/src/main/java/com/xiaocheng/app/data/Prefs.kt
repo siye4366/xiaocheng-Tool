@@ -24,6 +24,26 @@ class Prefs(context: Context) {
         get() = sp.getString("api_model", "deepseek-chat") ?: ""
         set(value) { sp.edit().putString("api_model", value).apply() }
 
+    /** 接入 API 后仍可手动切回本地规则。 */
+    var useLocalEngine: Boolean
+        get() = sp.getBoolean("use_local_engine", false)
+        set(value) { sp.edit().putBoolean("use_local_engine", value).apply() }
+
+    /** classic（现有分栏）或 combined（综合对话）。 */
+    var aiMode: String
+        get() = sp.getString("ai_mode", "classic") ?: "classic"
+        set(value) { sp.edit().putString("ai_mode", value).apply() }
+
+    /** 综合版 AI 的常驻要求 / 人设卡；空字符串表示使用内置默认。 */
+    var aiRequirements: String
+        get() = sp.getString("ai_requirements", "") ?: ""
+        set(value) { sp.edit().putString("ai_requirements", value).apply() }
+
+    /** 综合版 AI 是否直接执行日程修改。 */
+    var autoApplyActions: Boolean
+        get() = sp.getBoolean("auto_apply_actions", true)
+        set(value) { sp.edit().putBoolean("auto_apply_actions", value).apply() }
+
     var seeded: Boolean
         get() = sp.getBoolean("seeded", false)
         set(value) { sp.edit().putBoolean("seeded", value).apply() }

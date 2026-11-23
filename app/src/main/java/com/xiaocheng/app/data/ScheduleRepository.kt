@@ -37,6 +37,13 @@ class ScheduleRepository(private val prefs: Prefs) {
         })
     }
 
+    fun markUndone(ids: Set<String>) {
+        val now = System.currentTimeMillis()
+        commit(_events.value.map {
+            if (it.id in ids) it.copy(done = false, updatedAt = now) else it
+        })
+    }
+
     fun toggleDone(id: String) {
         commit(_events.value.map {
             if (it.id == id) it.copy(done = !it.done, updatedAt = System.currentTimeMillis()) else it
