@@ -29,13 +29,15 @@ class WebSearch {
             val q = query.trim()
             if (q.isBlank()) return@withContext emptyList()
             val encoded = URLEncoder.encode(q, "UTF-8")
-            bing(encoded, limit).ifEmpty { duck(encoded, limit) }
+            bing(encoded, limit, "www.bing.com")
+                .ifEmpty { bing(encoded, limit, "cn.bing.com") }
+                .ifEmpty { duck(encoded, limit) }
         }
 
-    private fun bing(encoded: String, limit: Int): List<WebSearchResult> {
+    private fun bing(encoded: String, limit: Int, host: String): List<WebSearchResult> {
         return try {
-            val html = get("https://www.bing.com/search?q=" + encoded + "&setlang=zh-Hans")
-            val doc = Jsoup.parse(html, "https://www.bing.com/")
+            val html = get("https://" + host + "/search?q=" + encoded + "&setlang=zh-Hans")
+            val doc = Jsoup.parse(html, "https://" + host + "/")
             val out = ArrayList<WebSearchResult>()
             for (el in doc.select("li.b_algo")) {
                 val a = el.selectFirst("h2 a") ?: continue

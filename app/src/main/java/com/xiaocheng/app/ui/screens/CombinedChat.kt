@@ -166,7 +166,7 @@ private fun WelcomeCard(onPrompt: (String) -> Unit) {
             Text("你好，我是校程的日程助手", style = MaterialTheme.typography.titleMedium, color = Pine)
             Spacer(Modifier.height(4.dp))
             Text(
-                "可以问今天的安排，也可以让我帮你新增、修改、完成或删除日程。只有过于复杂且明显与日程无关的题目，我会简短拒绝。",
+                "可以问安排，也可以让我改日程。",
                 style = MaterialTheme.typography.bodySmall,
                 color = Muted,
             )

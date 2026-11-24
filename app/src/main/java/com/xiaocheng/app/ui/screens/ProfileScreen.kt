@@ -90,7 +90,6 @@ fun ProfileScreen(vm: MainViewModel) {
     val context = LocalContext.current
     var showName by remember { mutableStateOf(false) }
     var showApi by remember { mutableStateOf(false) }
-    var showAbout by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     var showExport by remember { mutableStateOf(false) }
     var showFeatures by remember { mutableStateOf(false) }
@@ -122,24 +121,24 @@ fun ProfileScreen(vm: MainViewModel) {
         Spacer(Modifier.height(12.dp))
         Text("个人", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(4.dp))
-        Text("把校程，调成你顺手的样子。", style = MaterialTheme.typography.bodySmall, color = Muted)
+        Text("让信息变成行动。", style = MaterialTheme.typography.bodySmall, color = Muted)
         Spacer(Modifier.height(16.dp))
 
         ProfileCard(vm.userName, upcoming, done, events.size) { showName = true }
 
         Spacer(Modifier.height(20.dp))
-        SectionHeader("AI 引擎", -1, muted = false)
+        SectionHeader("AI", -1, muted = false)
         SettingRow(
             icon = Icons.Filled.Settings,
             title = "AI 配置",
-            subtitle = if (vm.hasApiKey) vm.apiModel + " · 已配置" else "未配置 API · 使用本地规则",
+            subtitle = if (vm.hasApiKey) "已配置 · " + vm.apiModel else "未配置",
             onClick = { showApi = true },
             accent = vm.hasApiKey,
         )
         SettingRow(
             icon = Icons.Filled.Build,
             title = "功能设置",
-            subtitle = "AI 模式、额度、常驻要求",
+            subtitle = "模式、额度、要求",
             onClick = { showFeatures = true },
         )
 
@@ -148,15 +147,8 @@ fun ProfileScreen(vm: MainViewModel) {
         SettingRow(
             icon = Icons.Filled.Share,
             title = "导出 .ics 日历",
-            subtitle = "保存 .ics 文件，导入后提前 30 分钟提醒",
+            subtitle = "提前 30 分钟提醒",
             onClick = { showExport = true },
-        )
-        SettingRow(
-            icon = Icons.Filled.DateRange,
-            title = "日程分组",
-            subtitle = "首页按「未到期 / 已到期」自动整理",
-            onClick = { Toast.makeText(context, "在首页查看两组日程", Toast.LENGTH_SHORT).show() },
-            showArrow = false,
         )
 
         Spacer(Modifier.height(18.dp))
@@ -164,24 +156,18 @@ fun ProfileScreen(vm: MainViewModel) {
         SettingRow(
             icon = Icons.Filled.Refresh,
             title = "清空全部日程",
-            subtitle = "共 " + events.size + " 条，操作不可撤销",
+            subtitle = "共 " + events.size + " 条",
             onClick = { confirmClear = true },
             danger = true,
         )
 
         Spacer(Modifier.height(18.dp))
-        SectionHeader("关于", -1, muted = false)
+        SectionHeader("更新", -1, muted = false)
         SettingRow(
             icon = Icons.Filled.Refresh,
             title = "检查更新",
-            subtitle = "当前 1.2.0 · 从 GitHub 检查新版本",
+            subtitle = "当前 1.2.1",
             onClick = { vm.checkForUpdates() },
-        )
-        SettingRow(
-            icon = Icons.Filled.Info,
-            title = "关于校程",
-            subtitle = "版本 1.2.0 · 开发者与项目信息",
-            onClick = { showAbout = true },
         )
         Spacer(Modifier.height(30.dp))
         Text(
@@ -207,9 +193,6 @@ fun ProfileScreen(vm: MainViewModel) {
     }
     if (vm.updateCheck.show) {
         UpdateCheckDialog(vm, context)
-    }
-    if (showAbout) {
-        AboutDialog(context, onDismiss = { showAbout = false })
     }
     if (showExport) {
         AlertDialog(
@@ -373,7 +356,7 @@ private fun ApiDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    "兼容 OpenAI 格式的接口都可以填。Key 只保存在本机，不会上传到别处。",
+                    "兼容 OpenAI 接口，Key 只存本机。",
                     style = MaterialTheme.typography.bodySmall,
                     color = Muted,
                 )
@@ -409,7 +392,7 @@ private fun ApiDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Pine, unfocusedBorderColor = Line, cursorColor = Pine),
                 )
                 Text(
-                    "不填 Key 也能使用：校程会用离线规则识别今天/明天/下周三、X月X日、具体时刻和截止日期。",
+                    "不填 Key 就用本地规则。",
                     style = MaterialTheme.typography.labelSmall,
                     color = Muted,
                 )
@@ -427,42 +410,6 @@ private fun ApiDialog(vm: MainViewModel, onDismiss: () -> Unit) {
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
-}
-
-@Composable
-private fun AboutDialog(context: Context, onDismiss: () -> Unit) {
-    val version = remember {
-        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "1.2.0"
-    }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("关于校程") },
-        text = {
-            Column(
-                modifier = Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
-            ) {
-                Text("校程", style = MaterialTheme.typography.headlineSmall)
-                Spacer(Modifier.height(2.dp))
-                Text("把散落的校园消息，变成清楚的日程。", style = MaterialTheme.typography.bodySmall, color = Muted)
-                Spacer(Modifier.height(16.dp))
-                AboutLine("版本", version)
-                AboutLine("包名", context.packageName)
-                AboutLine("构建", "2026-11-24 · v1.2.0 体验优化")
-                Spacer(Modifier.height(16.dp))
-                Text("开发者：校程 Studio", style = MaterialTheme.typography.labelSmall, color = Muted)
-                Text("技术：Kotlin · Jetpack Compose · Python", style = MaterialTheme.typography.labelSmall, color = Muted)
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("知道了", color = Pine) } },
-    )
-}
-
-@Composable
-private fun AboutLine(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = Muted, modifier = Modifier.width(56.dp))
-        Text(value, style = MaterialTheme.typography.labelMedium, color = Ink, modifier = Modifier.weight(1f))
-    }
 }
 
 @Composable
@@ -486,8 +433,7 @@ private fun FeatureSettingsDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                     modifier = Modifier.fillMaxWidth().padding(start = 22.dp, end = 16.dp, top = 18.dp, bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("功能设置", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-                    TextButton(onClick = onDismiss) { Text("关闭", color = Muted) }
+                    Text("功能设置", style = MaterialTheme.typography.headlineSmall)
                 }
                 Column(
                     modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp),
@@ -501,31 +447,26 @@ private fun FeatureSettingsDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                         }
                     }
                     Text(
-                        "经典：粘贴文本 / 文章链接 / 网页更新，适合批量整理。综合：对话式助手，可以直接新增、修改、完成或删除日程。",
+                        "经典：批量整理。综合：对话式助手。",
                         style = MaterialTheme.typography.bodySmall,
                         color = Muted,
                     )
                     if (!vm.hasApiKey) {
-                        Text("未配置 API 时只能使用经典模式。", style = MaterialTheme.typography.labelSmall, color = Coral)
+                        Text("未配置 API 时只能用经典。", style = MaterialTheme.typography.labelSmall, color = Coral)
                     }
 
                     if (mode == "combined") {
-                        Text("综合版修改日程", style = MaterialTheme.typography.titleSmall)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("自动执行 AI 的修改", style = MaterialTheme.typography.bodyMedium)
-                                Text("仅作用于综合版；关闭后，AI 会先列出修改，等你点「应用修改」。", style = MaterialTheme.typography.labelSmall, color = Muted)
+                                Text("自动执行修改", style = MaterialTheme.typography.bodyMedium)
+                                Text("关闭后先确认", style = MaterialTheme.typography.labelSmall, color = Muted)
                             }
                             Switch(checked = auto, onCheckedChange = { auto = it })
                         }
-                    }
-
-                    if (mode == "combined") {
-                        Text("综合版联网", style = MaterialTheme.typography.titleSmall)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("允许联网搜索", style = MaterialTheme.typography.bodyMedium)
-                                Text("对话涉及实时信息时会搜索公开网页；关键词会发送给搜索引擎。", style = MaterialTheme.typography.labelSmall, color = Muted)
+                                Text("联网搜索", style = MaterialTheme.typography.bodyMedium)
+                                Text("涉及实时信息时检索公开网页", style = MaterialTheme.typography.labelSmall, color = Muted)
                             }
                             Switch(checked = webSearch, onCheckedChange = { webSearch = it })
                         }
@@ -534,7 +475,7 @@ private fun FeatureSettingsDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                         OutlinedTextField(
                             value = req,
                             onValueChange = { req = it },
-                            placeholder = { Text("留空使用内置人设：可以正常聊天，只对过于复杂且无关日程的问题简短拒绝…") },
+                            placeholder = { Text("例如：说话简洁，只处理日程…") },
                             minLines = 4,
                             maxLines = 8,
                             modifier = Modifier.fillMaxWidth(),
@@ -547,18 +488,11 @@ private fun FeatureSettingsDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                                 cursorColor = Pine,
                             ),
                         )
-                        Text(
-                            "每次综合版对话都会先读取这段要求。建议写：说话简洁、只处理日程、过于复杂且无关的问题简短拒绝。修改后点「保存」生效。",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Muted,
-                        )
-                        TextButton(onClick = { req = "" }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp)) {
-                            Text("恢复内置人设", color = Pine, fontSize = 12.sp)
-                        }
+                        Text("修改后点「保存」生效。", style = MaterialTheme.typography.labelSmall, color = Muted)
                     } else {
                         Text("经典版", style = MaterialTheme.typography.titleSmall)
                         Text(
-                            "经典版使用粘贴文本、文章链接和网页更新。大模型 / 本地规则开关在 AI 页顶部；这里没有额外的经典版设置。",
+                            "没有额外设置；大模型 / 本地开关在 AI 页顶部。",
                             style = MaterialTheme.typography.bodySmall,
                             color = Muted,
                         )
@@ -583,7 +517,7 @@ private fun FeatureSettingsDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                         TextButton(onClick = { vm.testApi() }, enabled = vm.hasApiKey) { Text("测试连接", color = Pine) }
                     }
                     Text(
-                        "额度查询取决于接口是否开放（DeepSeek 支持 /user/balance）；不支持时会提示，不影响正常使用。",
+                        "部分接口支持额度查询。",
                         style = MaterialTheme.typography.labelSmall,
                         color = Muted,
                     )
@@ -648,29 +582,37 @@ private fun UpdateCheckDialog(vm: MainViewModel, context: Context) {
         text = {
             Column(modifier = Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState())) {
                 when {
-                    state.checking -> Text("正在从 GitHub 检查新版本…", color = Muted)
+                    state.downloading -> Text("正在下载安装包…", color = Muted)
+                    state.checking -> Text("检查中…", color = Muted)
                     state.error != null -> Text(state.error, color = Coral)
                     state.isNew -> {
-                        Text("当前 1.2.0 → v" + (state.latest ?: ""), style = MaterialTheme.typography.bodyMedium)
+                        Text("当前 1.2.1 → v" + (state.latest ?: ""), style = MaterialTheme.typography.bodyMedium)
                         if (state.notes.isNotBlank()) {
                             Spacer(Modifier.height(8.dp))
-                            Text(state.notes.take(800), style = MaterialTheme.typography.bodySmall, color = Muted)
+                            Text(state.notes.take(600), style = MaterialTheme.typography.bodySmall, color = Muted)
                         }
-                        Spacer(Modifier.height(8.dp))
-                        Text("下载后可直接覆盖安装，数据保留。", style = MaterialTheme.typography.labelSmall, color = Muted)
                     }
-                    else -> Text("当前已是最新版本 " + (state.latest ?: "1.2.0") + "。")
+                    else -> Text("当前已是最新版本 " + (state.latest ?: "1.2.1") + "。")
                 }
             }
         },
         confirmButton = {
             if (state.isNew) {
-                TextButton(onClick = {
-                    runCatching {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(state.url)))
-                    }
-                    vm.dismissUpdateCheck()
-                }) { Text("打开下载页", color = Pine) }
+                Row {
+                    TextButton(onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(state.url)))
+                        }
+                        vm.dismissUpdateCheck()
+                    }) { Text("下载页", color = Muted) }
+                    Spacer(Modifier.width(6.dp))
+                    Button(
+                        onClick = { vm.downloadUpdate(context) },
+                        enabled = !state.downloading && state.apkUrl.isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Pine, contentColor = CardWhite),
+                        shape = RoundedCornerShape(12.dp),
+                    ) { Text(if (state.downloading) "下载中…" else "一键更新") }
+                }
             } else {
                 TextButton(onClick = { vm.dismissUpdateCheck() }) { Text("知道了", color = Pine) }
             }

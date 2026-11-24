@@ -2,6 +2,10 @@ package com.xiaocheng.app
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -18,6 +22,9 @@ import com.xiaocheng.app.data.ScheduleEvent
 import com.xiaocheng.app.data.ScheduleRepository
 import com.xiaocheng.app.export.IcsExporter
 import com.xiaocheng.app.net.PageFetcher
+import androidx.core.content.FileProvider
+import com.xiaocheng.app.net.ApkUpdater
+import com.xiaocheng.app.net.NetworkTime
 import com.xiaocheng.app.net.UpdateChecker
 import com.xiaocheng.app.net.WebSearch
 import kotlinx.coroutines.CancellationException
@@ -72,8 +79,10 @@ data class QuotaUiState(
 data class UpdateCheckState(
     val show: Boolean = false,
     val checking: Boolean = false,
+    val downloading: Boolean = false,
     val latest: String? = null,
     val url: String = "",
+    val apkUrl: String = "",
     val notes: String = "",
     val error: String? = null,
     val isNew: Boolean = false,
@@ -87,6 +96,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val llm = LlmClient()
     private val updateChecker = UpdateChecker()
     private val webSearch = WebSearch()
+    private val networkTime = NetworkTime()
+    private val apkUpdater = ApkUpdater()
 
     val repo = ScheduleRepository(prefs)
     val events = repo.events
@@ -197,9 +208,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectAiMode(mode: String) {
-        if (mode == "combined" && effectiveLocal) {
-            toast = "综合版需要配置 API 并切换到大模型"
-            return
+        if (mode == "combined") {
+            if (!hasApiKey) {
+                toast = "先配置 API"
+                return
+            }
+            // 切到综合版就自动使用大模型；经典版的本地/大模型选择不受影响。
+            useLocalEngine = false
+            prefs.useLocalEngine = false
         }
         aiMode = mode
         prefs.aiMode = mode
@@ -462,7 +478,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val current = runCatching {
                     getApplication<Application>().packageManager
                         .getPackageInfo(getApplication<Application>().packageName, 0).versionName
-                }.getOrNull() ?: "1.2.0"
+                }.getOrNull() ?: "1.2.1"
                 val info = updateChecker.check(current)
                 updateCheck = if (info == null) {
                     UpdateCheckState(show = true, latest = current)
@@ -471,6 +487,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         show = true,
                         latest = info.version,
                         url = info.url,
+                        apkUrl = info.apkUrl,
                         notes = info.notes,
                         isNew = true,
                     )
@@ -485,6 +502,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun dismissUpdateCheck() {
         updateCheck = UpdateCheckState()
+    }
+
+    fun downloadUpdate(context: Context) {
+        val state = updateCheck
+        if (state.downloading || state.apkUrl.isBlank()) return
+        if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
+            runCatching {
+                context.startActivity(
+                    Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + context.packageName))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+            toast = "请先允许安装未知应用"
+            return
+        }
+        updateCheck = state.copy(downloading = true, error = null)
+        viewModelScope.launch {
+            try {
+                val file = apkUpdater.download(context, state.apkUrl)
+                val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+                val install = Intent(Intent.ACTION_VIEW)
+                    .setDataAndType(uri, "application/vnd.android.package-archive")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(install)
+                updateCheck = UpdateCheckState()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                updateCheck = updateCheck.copy(
+                    downloading = false,
+                    error = "下载失败：" + (e.message ?: "未知错误"),
+                )
+            }
+        }
     }
 
     fun clearChat() {
@@ -532,6 +584,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         chatLoading = true
         viewModelScope.launch {
             try {
+                val now = networkTime.now() ?: LocalDateTime.now()
+                if (isDateTimeQuestion(message)) {
+                    chatMessages = chatMessages + ChatMessage(
+                        "assistant",
+                        "今天是 " + now.format(DateTimeFormatter.ofPattern("yyyy年M月d日，EEEE", Locale.CHINA)) +
+                            "，当前时间 " + now.format(DateTimeFormatter.ofPattern("HH:mm")) + "。",
+                    )
+                    return@launch
+                }
                 val pageUrl = Regex("""https?://[^\s，。；）)]+""").find(message)?.value
                 val page = pageUrl?.let {
                     runCatching { fetcher.fetchPageContent(it) }.getOrNull()
@@ -546,7 +607,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val history = chatMessages.dropLast(1)
                     .filter { it.role == "user" || it.role == "assistant" }
                     .map { ChatTurn(it.role, it.content) }
-                val raw = llm.chat(llmConfig(), buildChatSystemPrompt(), history, userContent)
+                val raw = llm.chat(llmConfig(), buildChatSystemPrompt(now), history, userContent)
                 val json = runCatching { parseJsonObject(raw) }.getOrNull()
                 var reply = json?.optString("reply")?.trim().orEmpty().ifBlank { raw.trim() }
                 val actions = json?.let { parseActions(it) } ?: emptyList()
@@ -688,7 +749,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return results
     }
 
-    private fun buildChatSystemPrompt(): String {
+    private fun buildChatSystemPrompt(now: LocalDateTime): String {
         val custom = if (aiRequirements.isBlank()) "" else "\n\n用户附加的常驻要求：\n" + aiRequirements.take(2000)
         val eventsText = events.value.take(80).joinToString("\n") {
             "- id=" + it.id + " | " + it.title + " | 开始=" + (it.startAt ?: "无") +
@@ -698,6 +759,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return DEFAULT_PERSONA + custom +
             "\n\n现有日程：\n" + eventsText +
             "\n\n" + CHAT_ACTION_SCHEMA
+    }
+
+    private fun isDateTimeQuestion(text: String): Boolean {
+        val t = text.replace(" ", "")
+        return listOf(
+            "今天几号", "今天日期", "今天星期", "现在几点", "现在时间", "几月几号",
+            "当前时间", "whatdate", "whattime", "todaydate", "today'sdate",
+        ).any { t.contains(it, ignoreCase = true) }
     }
 
     private fun shouldSearch(text: String): Boolean {

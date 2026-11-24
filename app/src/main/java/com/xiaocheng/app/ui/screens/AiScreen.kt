@@ -107,7 +107,7 @@ fun AiScreen(vm: MainViewModel) {
 private fun AiHeader(vm: MainViewModel) {
     Column(modifier = Modifier.padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(8.dp))
-        ScreenTitle("AI 助手", "整理通知，或直接和日程助手对话。")
+        ScreenTitle("AI 助手", "整理通知，或直接对话。")
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             val apiOn = vm.hasApiKey && !vm.useLocalEngine
@@ -315,7 +315,7 @@ private fun TextSource(text: String, onTextChange: (String) -> Unit, loading: Bo
                 Text(if (loading) "抽取中…" else "开始提取", fontWeight = FontWeight.SemiBold)
             }
             Spacer(Modifier.height(8.dp))
-            Text("接入大模型后会优先用大模型；未配置或手动切回本地时，使用离线规则。", style = MaterialTheme.typography.labelSmall, color = Muted)
+            Text("未配置或切回本地时使用离线规则。", style = MaterialTheme.typography.labelSmall, color = Muted)
         }
     }
 }
@@ -331,7 +331,7 @@ private fun LinkSource(url: String, onUrlChange: (String) -> Unit, loading: Bool
         Column(modifier = Modifier.padding(16.dp)) {
             Text("单篇公开文章", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(4.dp))
-            Text("支持公众号文章、校园新闻等公开页面，只解析你主动提交的这一篇。", style = MaterialTheme.typography.bodySmall, color = Muted)
+            Text("支持公众号、校园新闻等公开页面。", style = MaterialTheme.typography.bodySmall, color = Muted)
             Spacer(Modifier.height(14.dp))
             OutlinedTextField(
                 value = url,
@@ -386,8 +386,8 @@ private fun UpdateSource(
             Text("学校通知页 · 手动检查更新", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(4.dp))
             Text(
-                if (aiEnabled) "接入 AI 后，会先读页面和链接再整理；动态页面会尝试在线阅读器。第一次检查会建立快照。"
-                else "第一次检查会保存页面条目快照；以后每次点击，只列出新增条目。不常驻后台。",
+                if (aiEnabled) "AI 先读页面和链接；动态页会尝试在线阅读器。"
+                else "第一次建立快照，以后只列新增。",
                 style = MaterialTheme.typography.bodySmall,
                 color = Muted,
             )
@@ -436,7 +436,7 @@ private fun UpdateSource(
                 colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Pine, unfocusedBorderColor = Line, focusedContainerColor = CardWhite, unfocusedContainerColor = CardWhite, cursorColor = Pine),
             )
             Text(
-                "填写正文时不再抓取网页，直接用 AI 整理；需要配置 API。",
+                "填写正文后不再抓取网页。",
                 style = MaterialTheme.typography.labelSmall,
                 color = Muted,
             )
@@ -567,7 +567,7 @@ private fun ResultSection(
             }
         }
         Spacer(Modifier.height(4.dp))
-        Text("保存后可在「首页」查看；一键清除会同时清空结果和上方输入内容。", style = MaterialTheme.typography.labelSmall, color = Muted)
+        Text("保存到首页；清除会同时清空输入。", style = MaterialTheme.typography.labelSmall, color = Muted)
     }
 }
 
