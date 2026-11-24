@@ -41,6 +41,7 @@ import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.UUID
 
 data class AiUiState(
     val loading: Boolean = false,
@@ -481,7 +482,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val current = runCatching {
                     getApplication<Application>().packageManager
                         .getPackageInfo(getApplication<Application>().packageName, 0).versionName
-                }.getOrNull() ?: "1.2.5"
+                }.getOrNull() ?: "1.3.0"
                 val info = updateChecker.check(current)
                 updateCheck = if (info == null) {
                     UpdateCheckState(show = true, latest = current)
@@ -985,6 +986,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun clearEvents() {
         repo.clear()
         toast = "日程已清空"
+    }
+
+    fun buildTransferJson(source: List<ScheduleEvent>): String {
+        val arr = JSONArray()
+        source.forEach { arr.put(it.toJson()) }
+        return JSONObject().apply {
+            put("format", "xiaocheng")
+            put("version", 1)
+            put("exportedAt", System.currentTimeMillis())
+            put("events", arr)
+        }.toString()
+    }
+
+    fun parseTransferJson(text: String): List<ScheduleEvent> {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return emptyList()
+        val arr = runCatching {
+            val root = JSONObject(trimmed)
+            root.optJSONArray("events")
+        }.getOrNull() ?: runCatching { JSONArray(trimmed) }.getOrNull() ?: return emptyList()
+        val out = ArrayList<ScheduleEvent>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val event = runCatching { ScheduleEvent.fromJson(o) }.getOrNull() ?: continue
+            if (event.title.isNotBlank()) out.add(event)
+        }
+        return out
+    }
+
+    fun importEvents(source: List<ScheduleEvent>): Int {
+        if (source.isEmpty()) return 0
+        val now = System.currentTimeMillis()
+        val imported = source.map {
+            it.copy(
+                id = UUID.randomUUID().toString(),
+                createdAt = now,
+                updatedAt = now,
+            )
+        }
+        repo.addAll(imported)
+        toast = "已导入 " + imported.size + " 条"
+        return imported.size
     }
 
     fun buildIcsText(): String = IcsExporter.build(events.value)

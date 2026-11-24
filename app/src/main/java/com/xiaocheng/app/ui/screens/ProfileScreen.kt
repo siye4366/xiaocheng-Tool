@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -41,6 +43,7 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -71,6 +74,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import androidx.compose.runtime.collectAsState
 import com.xiaocheng.app.MainViewModel
+import com.xiaocheng.app.data.ScheduleEvent
 import com.xiaocheng.app.ui.CircleIcon
 import com.xiaocheng.app.ui.SectionHeader
 import com.xiaocheng.app.ui.theme.CardWhite
@@ -82,6 +86,7 @@ import com.xiaocheng.app.ui.theme.Paper
 import com.xiaocheng.app.ui.theme.Pine
 import com.xiaocheng.app.ui.theme.PineDeep
 import com.xiaocheng.app.ui.theme.SoftPine
+import com.xiaocheng.app.util.formatFull
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -94,6 +99,9 @@ fun ProfileScreen(vm: MainViewModel) {
     var confirmClear by remember { mutableStateOf(false) }
     var showExport by remember { mutableStateOf(false) }
     var showFeatures by remember { mutableStateOf(false) }
+    var transferMode by remember { mutableStateOf<String?>(null) }
+    var transferEvents by remember { mutableStateOf<List<ScheduleEvent>>(emptyList()) }
+    var pendingExport by remember { mutableStateOf<List<ScheduleEvent>>(emptyList()) }
 
     val createDoc = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/calendar")) { uri ->
         if (uri != null) {
@@ -105,6 +113,35 @@ fun ProfileScreen(vm: MainViewModel) {
                 Toast.makeText(context, "日历文件已保存，点开即可导入手机日历", Toast.LENGTH_LONG).show()
             }.onFailure {
                 Toast.makeText(context, "保存失败：" + (it.message ?: "未知错误"), Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    val exportJsonDoc = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(vm.buildTransferJson(pendingExport).toByteArray(Charsets.UTF_8))
+                } ?: error("无法写入文件")
+            }.onSuccess {
+                Toast.makeText(context, "已导出 " + pendingExport.size + " 条", Toast.LENGTH_SHORT).show()
+            }.onFailure {
+                Toast.makeText(context, "导出失败：" + (it.message ?: "未知错误"), Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    val importJsonDoc = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val text = runCatching {
+                context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            }.getOrNull()
+            val parsed = vm.parseTransferJson(text.orEmpty())
+            if (parsed.isEmpty()) {
+                Toast.makeText(context, "没有读到可导入的日程", Toast.LENGTH_SHORT).show()
+            } else {
+                transferEvents = parsed
+                transferMode = "import"
             }
         }
     }
@@ -151,6 +188,12 @@ fun ProfileScreen(vm: MainViewModel) {
             subtitle = "提前 30 分钟提醒",
             onClick = { showExport = true },
         )
+        SettingRow(
+            icon = Icons.Filled.DateRange,
+            title = "导入 / 导出",
+            subtitle = "选择日程，跨设备转移",
+            onClick = { transferMode = "choose" },
+        )
 
         Spacer(Modifier.height(18.dp))
         SectionHeader("数据管理", -1, muted = false)
@@ -173,7 +216,7 @@ fun ProfileScreen(vm: MainViewModel) {
         SettingRow(
             icon = Icons.Filled.Refresh,
             title = "检查更新",
-            subtitle = "当前 1.2.5",
+            subtitle = "当前 1.3.0",
             onClick = { vm.checkForUpdates() },
         )
         Spacer(Modifier.height(30.dp))
@@ -200,6 +243,41 @@ fun ProfileScreen(vm: MainViewModel) {
     }
     if (vm.updateCheck.show) {
         UpdateCheckDialog(vm, context)
+    }
+    when (transferMode) {
+        "choose" -> TransferChoiceDialog(
+            onDismiss = { transferMode = null },
+            onExport = {
+                transferEvents = events
+                transferMode = "export"
+            },
+            onImport = {
+                transferMode = null
+                importJsonDoc.launch(arrayOf("application/json", "text/plain", "*/*"))
+            },
+        )
+        "export" -> TransferSelectDialog(
+            title = "导出日程",
+            events = transferEvents,
+            confirmText = "导出选中",
+            onDismiss = { transferMode = null },
+            onConfirm = { selected ->
+                pendingExport = selected
+                transferMode = null
+                val name = "校程日程_" + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd")) + ".json"
+                exportJsonDoc.launch(name)
+            },
+        )
+        "import" -> TransferSelectDialog(
+            title = "导入日程",
+            events = transferEvents,
+            confirmText = "保存选中",
+            onDismiss = { transferMode = null },
+            onConfirm = { selected ->
+                vm.importEvents(selected)
+                transferMode = null
+            },
+        )
     }
     if (showExport) {
         AlertDialog(
@@ -420,6 +498,86 @@ private fun ApiDialog(vm: MainViewModel, onDismiss: () -> Unit) {
 }
 
 @Composable
+private fun TransferChoiceDialog(
+    onDismiss: () -> Unit,
+    onExport: () -> Unit,
+    onImport: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("导入 / 导出") },
+        text = { Text("导出时选择要带走的日程；导入文件后也可以选择保存哪些。") },
+        confirmButton = { TextButton(onClick = onExport) { Text("导出", color = Pine) } },
+        dismissButton = { TextButton(onClick = onImport) { Text("导入", color = Pine) } },
+    )
+}
+
+@Composable
+private fun TransferSelectDialog(
+    title: String,
+    events: List<ScheduleEvent>,
+    confirmText: String,
+    onDismiss: () -> Unit,
+    onConfirm: (List<ScheduleEvent>) -> Unit,
+) {
+    var selected by remember(events) { mutableStateOf(events.map { it.id }.toSet()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("已选 " + selected.size + " / " + events.size, style = MaterialTheme.typography.labelMedium, color = Muted)
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = { selected = events.map { it.id }.toSet() }) { Text("全选", fontSize = 12.sp) }
+                    TextButton(onClick = { selected = emptySet() }) { Text("清空", fontSize = 12.sp) }
+                }
+                if (events.isEmpty()) {
+                    Text("没有日程", style = MaterialTheme.typography.bodySmall, color = Muted)
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 340.dp)) {
+                        items(events, key = { it.id }) { event ->
+                            val checked = event.id in selected
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selected = if (checked) selected - event.id else selected + event.id
+                                    }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Checkbox(
+                                    checked = checked,
+                                    onCheckedChange = {
+                                        selected = if (it) selected + event.id else selected - event.id
+                                    },
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(event.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    val time = event.startAt?.let { formatFull(it) }
+                                        ?: event.deadlineAt?.let { "截止 " + formatFull(it) }
+                                    if (time != null) {
+                                        Text(time, style = MaterialTheme.typography.labelSmall, color = Muted)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(events.filter { it.id in selected }) },
+                enabled = selected.isNotEmpty(),
+            ) { Text(confirmText, color = Pine) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消", color = Muted) } },
+    )
+}
+
+@Composable
 private fun FeatureSettingsDialog(vm: MainViewModel, onDismiss: () -> Unit) {
     var mode by remember { mutableStateOf(vm.aiMode) }
     var auto by remember { mutableStateOf(vm.autoApplyActions) }
@@ -595,13 +753,13 @@ private fun UpdateCheckDialog(vm: MainViewModel, context: Context) {
                     state.checking -> Text("检查中…", color = Muted)
                     state.error != null -> Text(state.error, color = Coral)
                     state.isNew -> {
-                        Text("当前 1.2.5 → v" + (state.latest ?: ""), style = MaterialTheme.typography.bodyMedium)
+                        Text("当前 1.3.0 → v" + (state.latest ?: ""), style = MaterialTheme.typography.bodyMedium)
                         if (state.notes.isNotBlank()) {
                             Spacer(Modifier.height(8.dp))
                             Text(state.notes.take(600), style = MaterialTheme.typography.bodySmall, color = Muted)
                         }
                     }
-                    else -> Text("当前已是最新版本 " + (state.latest ?: "1.2.5") + "。")
+                    else -> Text("当前已是最新版本 " + (state.latest ?: "1.3.0") + "。")
                 }
             }
         },

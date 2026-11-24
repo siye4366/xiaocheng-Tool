@@ -2,6 +2,8 @@ package com.xiaocheng.app.data
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.Instant
+import java.time.ZoneId
 import java.util.UUID
 
 /** 一条校园日程。时间统一存为 epoch millis，null 表示未识别。 */
@@ -40,6 +42,18 @@ data class ScheduleEvent(
     }
 
     fun isOverdue(now: Long = System.currentTimeMillis()): Boolean = isExpired(now)
+
+    /** 今天要关注、且还没到期的日程。跨天日程只要今天仍在区间内也算。 */
+    fun isActiveToday(now: Long = System.currentTimeMillis()): Boolean {
+        if (isExpired(now)) return false
+        val zone = ZoneId.systemDefault()
+        val day = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+        val dayStart = day.atStartOfDay(zone).toInstant().toEpochMilli()
+        val nextDay = day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val s = startAt ?: deadlineAt ?: return false
+        val e = deadlineAt ?: startAt ?: return false
+        return s < nextDay && e >= dayStart
+    }
 
     /** 未到期时取最近的未来时间；已到期时取最近的过去时间。 */
     fun nextTimePoint(now: Long): EventTimePoint? {

@@ -88,7 +88,6 @@ import com.xiaocheng.app.util.deadlineCountdownText
 import com.xiaocheng.app.util.startCountdownText
 import com.xiaocheng.app.util.formatShort
 import com.xiaocheng.app.util.greeting
-import com.xiaocheng.app.util.isToday
 import com.xiaocheng.app.util.todayLabel
 import kotlinx.coroutines.delay
 
@@ -136,7 +135,7 @@ fun HomeScreen(vm: MainViewModel) {
                 .thenBy { if (it.sortIsDeadline(now)) 0 else 1 }
         )
     }
-    val todayCount = events.count { !it.done && it.keyTime?.let { t -> isToday(t, now) } == true }
+    val todayCount = events.count { it.isActiveToday(now) }
     val allSelected = events.isNotEmpty() && selectedIds.size == events.size
 
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
