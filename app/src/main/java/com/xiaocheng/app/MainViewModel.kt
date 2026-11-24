@@ -174,7 +174,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             useLocalEngine = true
             prefs.useLocalEngine = true
         }
-        if (useLocalEngine && aiMode == "combined") {
+        if (apiKey.isBlank() && aiMode == "combined") {
             aiMode = "classic"
             prefs.aiMode = aiMode
         }
@@ -208,15 +208,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectAiMode(mode: String) {
-        if (mode == "combined") {
-            if (!hasApiKey) {
-                toast = "先配置 API"
-                return
-            }
-            // 切到综合版就自动使用大模型；经典版的本地/大模型选择不受影响。
-            useLocalEngine = false
-            prefs.useLocalEngine = false
+        if (mode == "combined" && !hasApiKey) {
+            toast = "先配置 API"
+            return
         }
+        // 综合版固定用大模型；不会改动经典版的本地/大模型开关。
         aiMode = mode
         prefs.aiMode = mode
     }
@@ -478,7 +474,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val current = runCatching {
                     getApplication<Application>().packageManager
                         .getPackageInfo(getApplication<Application>().packageName, 0).versionName
-                }.getOrNull() ?: "1.2.1"
+                }.getOrNull() ?: "1.2.2"
                 val info = updateChecker.check(current)
                 updateCheck = if (info == null) {
                     UpdateCheckState(show = true, latest = current)
@@ -573,8 +569,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             chatError = "请先在「个人 → AI 配置」里填写 API Key"
             return
         }
-        if (effectiveLocal) {
-            chatError = "综合版需要大模型，请把 AI 引擎切回大模型"
+        // 综合版始终使用 API；经典版的本地/大模型开关与这里无关。
+        if (!hasApiKey) {
+            chatError = "先配置 API"
             return
         }
         chatError = null

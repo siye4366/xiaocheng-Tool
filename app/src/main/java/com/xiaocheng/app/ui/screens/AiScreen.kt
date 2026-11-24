@@ -95,7 +95,7 @@ fun AiScreen(vm: MainViewModel) {
             .imePadding(),
     ) {
         AiHeader(vm)
-        if (vm.aiMode == "combined" && vm.hasApiKey && !vm.effectiveLocal) {
+        if (vm.aiMode == "combined" && vm.hasApiKey) {
             CombinedChat(vm, Modifier.weight(1f))
         } else {
             ClassicAiContent(vm, Modifier.weight(1f))
@@ -110,7 +110,7 @@ private fun AiHeader(vm: MainViewModel) {
         ScreenTitle("AI 助手", "整理通知，或直接对话。")
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            val apiOn = vm.hasApiKey && !vm.useLocalEngine
+            val apiOn = vm.hasApiKey && (vm.aiMode == "combined" || !vm.useLocalEngine)
             EngineChip(
                 configured = apiOn,
                 model = vm.apiModel,
