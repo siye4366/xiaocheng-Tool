@@ -8,6 +8,16 @@ import org.json.JSONObject
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("xiaocheng_prefs", Context.MODE_PRIVATE)
 
+    init {
+        // v1.2 起引擎默认本地；升级时只重置一次，之后尊重用户自己的选择。
+        if (!sp.getBoolean("engine_default_local_v2", false)) {
+            sp.edit()
+                .putBoolean("use_local_engine", true)
+                .putBoolean("engine_default_local_v2", true)
+                .apply()
+        }
+    }
+
     var userName: String
         get() = sp.getString("user_name", "") ?: ""
         set(value) { sp.edit().putString("user_name", value).apply() }
@@ -26,7 +36,7 @@ class Prefs(context: Context) {
 
     /** 接入 API 后仍可手动切回本地规则。 */
     var useLocalEngine: Boolean
-        get() = sp.getBoolean("use_local_engine", false)
+        get() = sp.getBoolean("use_local_engine", true)
         set(value) { sp.edit().putBoolean("use_local_engine", value).apply() }
 
     /** classic（现有分栏）或 combined（综合对话）。 */
@@ -38,6 +48,11 @@ class Prefs(context: Context) {
     var aiRequirements: String
         get() = sp.getString("ai_requirements", "") ?: ""
         set(value) { sp.edit().putString("ai_requirements", value).apply() }
+
+    /** 综合版是否允许联网搜索。 */
+    var webSearchEnabled: Boolean
+        get() = sp.getBoolean("web_search_enabled", true)
+        set(value) { sp.edit().putBoolean("web_search_enabled", value).apply() }
 
     /** 综合版 AI 是否直接执行日程修改。 */
     var autoApplyActions: Boolean

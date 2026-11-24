@@ -86,6 +86,7 @@ fun XiaoChengApp(vm: MainViewModel) {
         bottomBar = {
             XcBottomBar(selected) { target ->
                 if (target != selected) {
+                    if (target == 1 || selected == 1) vm.clearAiNotice()
                     scope.launch {
                         pager.animateScrollToPage(target, animationSpec = tween(420, easing = FastOutSlowInEasing))
                     }
@@ -95,6 +96,7 @@ fun XiaoChengApp(vm: MainViewModel) {
     ) { padding ->
         HorizontalPager(
             state = pager,
+            userScrollEnabled = false,
             modifier = Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding()),
         ) { page ->
             when (page) {

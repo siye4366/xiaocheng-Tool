@@ -35,6 +35,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -44,6 +45,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -85,6 +87,7 @@ private const val EXAMPLE = "【讲座通知】人工智能前沿讲座\n" +
 
 @Composable
 fun AiScreen(vm: MainViewModel) {
+    LaunchedEffect(vm.aiMode) { vm.clearAiNotice() }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -107,22 +110,28 @@ private fun AiHeader(vm: MainViewModel) {
         ScreenTitle("AI 助手", "整理通知，或直接和日程助手对话。")
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
+            val apiOn = vm.hasApiKey && !vm.useLocalEngine
             EngineChip(
-                configured = vm.hasApiKey && !vm.effectiveLocal,
+                configured = apiOn,
                 model = vm.apiModel,
             )
-            Spacer(Modifier.weight(1f))
-            Text(
-                if (vm.effectiveLocal) "本地规则" else "大模型",
-                style = MaterialTheme.typography.labelMedium,
-                color = Muted,
-            )
-            Spacer(Modifier.width(6.dp))
-            Switch(
-                checked = vm.effectiveLocal,
-                onCheckedChange = { vm.switchEngine(it) },
-                enabled = vm.hasApiKey,
-            )
+            if (vm.aiMode != "combined") {
+                Spacer(Modifier.weight(1f))
+                Text(
+                    if (apiOn) "大模型" else "本地规则",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Muted,
+                )
+                Spacer(Modifier.width(6.dp))
+                Switch(
+                    checked = apiOn,
+                    onCheckedChange = {
+                        vm.clearAiNotice()
+                        vm.switchEngine(!it)
+                    },
+                    enabled = vm.hasApiKey,
+                )
+            }
         }
         Spacer(Modifier.height(8.dp))
     }
@@ -135,6 +144,7 @@ private fun ClassicAiContent(vm: MainViewModel, modifier: Modifier = Modifier) {
     var url by remember { mutableStateOf("") }
     var updateUrl by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
+    var manualText by remember { mutableStateOf("") }
     val ai = vm.aiState
     val update = vm.updateState
 
@@ -143,30 +153,50 @@ private fun ClassicAiContent(vm: MainViewModel, modifier: Modifier = Modifier) {
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp),
     ) {
-        SourceTabs(mode) { mode = it }
+        SourceTabs(mode) {
+            mode = it
+            vm.clearAiNotice()
+        }
         Spacer(Modifier.height(14.dp))
 
         when (mode) {
             0 -> TextSource(
                 text = text,
-                onTextChange = { text = it },
+                onTextChange = {
+                    text = it
+                    vm.clearAiNotice()
+                },
                 loading = ai.loading,
                 onExtract = { vm.extractText(text) },
                 onExample = { text = EXAMPLE },
             )
             1 -> LinkSource(
                 url = url,
-                onUrlChange = { url = it },
+                onUrlChange = {
+                    url = it
+                    vm.clearAiNotice()
+                },
                 loading = ai.loading,
                 onExtract = { vm.extractUrl(url.trim()) },
             )
             else -> UpdateSource(
                 url = updateUrl,
-                onUrlChange = { updateUrl = it },
+                onUrlChange = {
+                    updateUrl = it
+                    vm.clearAiNotice()
+                },
                 query = query,
-                onQueryChange = { query = it },
+                onQueryChange = {
+                    query = it
+                    vm.clearAiNotice()
+                },
+                manualText = manualText,
+                onManualTextChange = {
+                    manualText = it
+                    vm.clearAiNotice()
+                },
                 loading = update.loading,
-                onCheck = { vm.checkUpdates(updateUrl.trim(), query.trim()) },
+                onCheck = { vm.checkUpdates(updateUrl.trim(), query.trim(), manualText) },
                 aiEnabled = vm.hasApiKey && !vm.effectiveLocal,
             )
         }
@@ -185,7 +215,21 @@ private fun ClassicAiContent(vm: MainViewModel, modifier: Modifier = Modifier) {
         }
         if (ai.results.isNotEmpty()) {
             Spacer(Modifier.height(18.dp))
-            ResultSection(ai.results, ai.engine, ai.sourceLabel, onSaveAll = { vm.saveAllExtracted() }, onSaveOne = { vm.saveOne(it) })
+            ResultSection(
+                ai.results,
+                ai.engine,
+                ai.sourceLabel,
+                onSaveAll = { vm.saveAllExtracted() },
+                onSaveOne = { vm.saveOne(it) },
+                onClear = {
+                    vm.clearAiResult()
+                    text = ""
+                    url = ""
+                    updateUrl = ""
+                    query = ""
+                    manualText = ""
+                },
+            )
         } else if (ai.loading && mode != 2) {
             Spacer(Modifier.height(16.dp))
             LoadingCard(if (vm.hasApiKey && !vm.effectiveLocal) "大模型正在阅读通知…" else "正在用本地规则抽取…")
@@ -325,10 +369,13 @@ private fun UpdateSource(
     onUrlChange: (String) -> Unit,
     query: String,
     onQueryChange: (String) -> Unit,
+    manualText: String,
+    onManualTextChange: (String) -> Unit,
     loading: Boolean,
     onCheck: () -> Unit,
     aiEnabled: Boolean,
 ) {
+    val context = LocalContext.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(22.dp),
@@ -355,6 +402,16 @@ private fun UpdateSource(
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Pine, unfocusedBorderColor = Line, focusedContainerColor = CardWhite, unfocusedContainerColor = CardWhite, cursorColor = Pine),
             )
+            if (url.trim().startsWith("http")) {
+                TextButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url.trim())))
+                        }
+                    },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+                ) { Text("在浏览器打开链接（登录用）", color = Pine, fontSize = 12.sp) }
+            }
             Spacer(Modifier.height(10.dp))
             OutlinedTextField(
                 value = query,
@@ -365,6 +422,23 @@ private fun UpdateSource(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Pine, unfocusedBorderColor = Line, focusedContainerColor = CardWhite, unfocusedContainerColor = CardWhite, cursorColor = Pine),
+            )
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = manualText,
+                onValueChange = onManualTextChange,
+                label = { Text("登录后正文（可选）") },
+                placeholder = { Text("需要登录的页面：在浏览器登录后复制正文粘贴到这里") },
+                minLines = 3,
+                maxLines = 6,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Pine, unfocusedBorderColor = Line, focusedContainerColor = CardWhite, unfocusedContainerColor = CardWhite, cursorColor = Pine),
+            )
+            Text(
+                "填写正文时不再抓取网页，直接用 AI 整理；需要配置 API。",
+                style = MaterialTheme.typography.labelSmall,
+                color = Muted,
             )
             Spacer(Modifier.height(14.dp))
             Button(
@@ -453,6 +527,7 @@ private fun ResultSection(
     sourceLabel: String,
     onSaveAll: () -> Unit,
     onSaveOne: (ExtractedEvent) -> Unit,
+    onClear: () -> Unit,
 ) {
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -473,16 +548,26 @@ private fun ResultSection(
             ResultCard(ev, onSave = { onSaveOne(ev) })
             Spacer(Modifier.height(10.dp))
         }
-        Button(
-            onClick = onSaveAll,
-            modifier = Modifier.fillMaxWidth().height(50.dp),
-            shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Pine, contentColor = CardWhite),
-        ) {
-            Text("全部保存到日程 (" + results.size + ")", fontWeight = FontWeight.SemiBold)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = onSaveAll,
+                modifier = Modifier.weight(1f).height(50.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Pine, contentColor = CardWhite),
+            ) {
+                Text("全部保存 (" + results.size + ")", fontWeight = FontWeight.SemiBold)
+            }
+            OutlinedButton(
+                onClick = onClear,
+                modifier = Modifier.weight(1f).height(50.dp),
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, Coral.copy(alpha = 0.6f)),
+            ) {
+                Text("一键清除", color = Coral, fontWeight = FontWeight.SemiBold)
+            }
         }
         Spacer(Modifier.height(4.dp))
-        Text("保存后可在「首页」查看，时间识别不准确的条目可以直接点开修改。", style = MaterialTheme.typography.labelSmall, color = Muted)
+        Text("保存后可在「首页」查看；一键清除会同时清空结果和上方输入内容。", style = MaterialTheme.typography.labelSmall, color = Muted)
     }
 }
 

@@ -19,12 +19,16 @@ import com.xiaocheng.app.data.ScheduleRepository
 import com.xiaocheng.app.export.IcsExporter
 import com.xiaocheng.app.net.PageFetcher
 import com.xiaocheng.app.net.UpdateChecker
+import com.xiaocheng.app.net.WebSearch
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 data class AiUiState(
     val loading: Boolean = false,
@@ -82,6 +86,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val fetcher = PageFetcher()
     private val llm = LlmClient()
     private val updateChecker = UpdateChecker()
+    private val webSearch = WebSearch()
 
     val repo = ScheduleRepository(prefs)
     val events = repo.events
@@ -109,6 +114,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var aiRequirements by mutableStateOf(prefs.aiRequirements)
         private set
     var autoApplyActions by mutableStateOf(prefs.autoApplyActions)
+        private set
+    var webSearchEnabled by mutableStateOf(prefs.webSearchEnabled)
         private set
 
     var quotaState by mutableStateOf(QuotaUiState())
@@ -140,23 +147,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val v = name.trim().ifBlank { "同学" }
         userName = v
         prefs.userName = v
-        toast = "名字已更新"
+        toast = "已保存"
     }
 
     fun saveApi(base: String, key: String, model: String) {
+        val hadKey = apiKey.isNotBlank()
         apiBase = base.trim().ifBlank { "https://api.deepseek.com/v1" }
         apiKey = key.trim()
         apiModel = model.trim().ifBlank { "deepseek-chat" }
         prefs.apiBase = apiBase
         prefs.apiKey = apiKey
         prefs.apiModel = apiModel
-        useLocalEngine = apiKey.isBlank()
-        prefs.useLocalEngine = useLocalEngine
+        // 第一次接入 API 时默认仍用本地规则；用户主动打开开关才走大模型。
+        if (!hadKey || apiKey.isBlank()) {
+            useLocalEngine = true
+            prefs.useLocalEngine = true
+        }
         if (useLocalEngine && aiMode == "combined") {
             aiMode = "classic"
             prefs.aiMode = aiMode
         }
-        toast = if (apiKey.isBlank()) "已切换为本地规则引擎" else "AI 配置已保存"
+        toast = "已保存"
     }
 
     fun clearApi() {
@@ -197,12 +208,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun saveAiRequirements(text: String) {
         aiRequirements = text.trim()
         prefs.aiRequirements = aiRequirements
-        toast = "常驻要求已保存"
+        toast = "已保存"
     }
 
     fun changeAutoApply(value: Boolean) {
         autoApplyActions = value
         prefs.autoApplyActions = value
+    }
+
+    fun setWebSearch(value: Boolean) {
+        webSearchEnabled = value
+        prefs.webSearchEnabled = value
+        toast = "已保存"
+    }
+
+    fun toggleWebSearch() {
+        setWebSearch(!webSearchEnabled)
+    }
+
+    fun clearAiResult() {
+        aiState = AiUiState()
+    }
+
+    fun clearAiNotice() {
+        if (aiState.error != null || aiState.warning != null) {
+            aiState = aiState.copy(error = null, warning = null)
+        }
+        if (updateState.error != null) {
+            updateState = updateState.copy(error = null)
+        }
     }
 
     private fun llmConfig() = LlmConfig(apiBase, apiKey, apiModel)
@@ -274,9 +308,53 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun checkUpdates(url: String, query: String = "") {
-        if (url.isBlank()) {
-            updateState = UpdateUiState(error = "先填写一个公开的通知页面链接")
+    fun checkUpdates(url: String, query: String = "", manualText: String = "") {
+        if (url.isBlank() && manualText.isBlank()) {
+            updateState = UpdateUiState(error = "先填写一个公开的通知页面链接，或粘贴登录后的正文")
+            return
+        }
+        if (manualText.isNotBlank()) {
+            if (!hasApiKey) {
+                updateState = UpdateUiState(error = "整理登录后正文需要先配置 API")
+                return
+            }
+            if (effectiveLocal) {
+                updateState = UpdateUiState(error = "请先在 AI 页切换到大模型，再整理登录后正文")
+                return
+            }
+            viewModelScope.launch {
+                updateState = UpdateUiState(loading = true, url = url)
+                try {
+                    val aiItems = llm.digestNotices(
+                        llmConfig(),
+                        url.ifBlank { "manual" },
+                        "登录后正文",
+                        manualText,
+                        emptyList(),
+                        query,
+                    )
+                    if (aiItems.isEmpty()) throw IOException("没有从正文中整理出条目")
+                    val key = url.ifBlank { "manual" }
+                    val keys = aiItems.map { it.title + "|" + it.url }.toSet()
+                    val old = prefs.loadSnapshot(key)
+                    val fresh = if (old == null) aiItems.take(20) else aiItems.filter {
+                        (it.title + "|" + it.url) !in old
+                    }.take(20)
+                    prefs.saveSnapshot(key, keys)
+                    updateState = UpdateUiState(
+                        url = url,
+                        items = fresh,
+                        firstRun = old == null,
+                        total = aiItems.size,
+                        engine = "AI 整理（粘贴正文）",
+                        pageTitle = "登录后正文",
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    updateState = UpdateUiState(url = url, error = e.message ?: "整理正文失败")
+                }
+            }
             return
         }
         viewModelScope.launch {
@@ -384,7 +462,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val current = runCatching {
                     getApplication<Application>().packageManager
                         .getPackageInfo(getApplication<Application>().packageName, 0).versionName
-                }.getOrNull() ?: "1.1.0"
+                }.getOrNull() ?: "1.2.0"
                 val info = updateChecker.check(current)
                 updateCheck = if (info == null) {
                     UpdateCheckState(show = true, latest = current)
@@ -622,6 +700,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             "\n\n" + CHAT_ACTION_SCHEMA
     }
 
+    private fun shouldSearch(text: String): Boolean {
+        val t = text.trim()
+        if (t.length < 4) return false
+        if (t.contains("http://") || t.contains("https://")) return false
+        val scheduleWords = listOf("日程", "安排", "提醒", "新增", "添加", "删除", "完成", "取消", "改到", "改一下", "日程表")
+        if (scheduleWords.any { t.contains(it) }) return false
+        val triggers = listOf(
+            "查", "搜", "最新", "新闻", "现在", "今天", "明天", "多少", "哪",
+            "什么时候", "推荐", "天气", "价格", "是谁", "为什么", "怎么", "介绍", "翻译",
+        )
+        return triggers.any { t.contains(it) } || t.contains("?") || t.contains("？")
+    }
+
+    private suspend fun buildSearchContext(query: String): String {
+        val results = runCatching { webSearch.search(query, 5) }.getOrDefault(emptyList())
+        if (results.isEmpty()) return ""
+        return "\n\n[联网搜索结果，可能不完整，请自行判断]\n" + results.joinToString("\n") {
+            "- " + it.title + "\n  " + it.snippet.take(180) + "\n  " + it.url
+        }
+    }
+
     fun saveAllExtracted() {
         val list = aiState.results
         if (list.isEmpty()) return
@@ -686,8 +785,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
 
 private const val DEFAULT_PERSONA = """你是「校程」的日程助手，说话简洁、可靠，像一位细心的同学。
-你只处理校园日程、通知整理、网页内容整理和日程的增删改查。
-可以简短寒暄；对于与日程无关的问题（数学题、代码题、写论文、翻译长文、闲聊八卦等），用一两句话礼貌拒绝，不展开、不计算、不写代码，避免浪费 token。
+你可以正常聊天、解释、给建议，也可以整理校园通知、网页内容和日程的增删改查。
+只有当问题明显与日程无关且需要大量计算或长篇专业处理（例如完整解数学题、写长代码、代写论文）时，才用一两句话礼貌拒绝，避免消耗 token；普通问好、闲聊、简单问答可以正常回应。
 不要编造日程或网页内容。用户要求修改日程时，只能使用给定日程列表里的 id；找不到就明确说没找到。
 回答尽量短，优先通过 actions 完成操作，不要长篇解释。"""
 
