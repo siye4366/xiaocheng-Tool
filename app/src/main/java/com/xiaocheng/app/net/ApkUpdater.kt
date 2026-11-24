@@ -17,7 +17,11 @@ class ApkUpdater {
         .followRedirects(true)
         .build()
 
-    suspend fun download(context: Context, url: String): File = withContext(Dispatchers.IO) {
+    suspend fun download(
+        context: Context,
+        url: String,
+        onProgress: (Int) -> Unit,
+    ): File = withContext(Dispatchers.IO) {
         if (url.isBlank()) throw IOException("没有下载地址")
         val out = File(context.cacheDir, "xiaocheng-update.apk")
         if (out.exists()) out.delete()
@@ -28,7 +32,28 @@ class ApkUpdater {
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw IOException("下载失败 " + resp.code)
             val body = resp.body ?: throw IOException("下载内容为空")
-            out.outputStream().use { stream -> body.byteStream().copyTo(stream) }
+            val total = body.contentLength()
+            var read = 0L
+            var last = -1
+            val buffer = ByteArray(8 * 1024)
+            body.byteStream().use { input ->
+                out.outputStream().use { output ->
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        output.write(buffer, 0, n)
+                        read += n
+                        if (total > 0) {
+                            val p = ((read * 100) / total).toInt().coerceIn(0, 100)
+                            if (p != last) {
+                                last = p
+                                onProgress(p)
+                            }
+                        }
+                    }
+                }
+            }
+            if (total <= 0) onProgress(100)
         }
         if (out.length() < 100_000) throw IOException("安装包下载不完整")
         out

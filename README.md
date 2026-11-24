@@ -11,7 +11,7 @@
 - 支持 Android 8.0（API 26）及以上
 - 安装包命名：xiaocheng-v版本号.apk；GitHub Release 标题：v版本号
 
-当前版本：1.2.3（versionCode 10203），版本规则见 [VERSIONING.md](VERSIONING.md)。
+当前版本：1.2.4（versionCode 10204），版本规则见 [VERSIONING.md](VERSIONING.md)。
 
 ## 界面
 
@@ -38,7 +38,8 @@
 - 引擎默认本地：经典版 AI 页顶部开关默认关闭；打开才走大模型，可随时切回本地。综合版固定使用大模型，不会改动经典版选择。
 - 开关只在经典版显示；综合版隐藏，切回经典需要到「功能设置」里改模式。
 - 功能设置：AI 模式、API 额度查询、测试连接；综合版才显示联网、自动执行、常驻要求。
-- 检查更新：从 GitHub Release 检查新版本；支持一键下载安装，也保留下载页入口。
+- 检查更新：从 GitHub Release 检查新版本；支持一键下载安装，带下载进度，也保留下载页入口。
+- VPN 兼容：GitHub API 被拦截时自动改用 Release 页面或 Atom 源检查。
 - 时间与联网：会从网络时间校准日期；综合版可联网搜索公开网页。
 - 设置精简：功能设置只显示当前模式需要的选项，经典版不再出现综合版设置。
 - 联网与时间：综合版会读取当前时间；开启联网后，涉及实时信息的问题会先搜索公开网页。
@@ -57,7 +58,7 @@
 
 正式包：
 
-[dist/xiaocheng-v1.2.3.apk](dist/xiaocheng-v1.2.3.apk)
+[dist/xiaocheng-v1.2.4.apk](dist/xiaocheng-v1.2.4.apk)
 
 直接下载安装，需允许「安装未知来源应用」。Android 8.0 及以上。
 

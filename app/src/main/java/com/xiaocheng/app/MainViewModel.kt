@@ -28,6 +28,7 @@ import com.xiaocheng.app.net.NetworkTime
 import com.xiaocheng.app.net.UpdateChecker
 import com.xiaocheng.app.net.WebSearch
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -84,6 +85,7 @@ data class UpdateCheckState(
     val show: Boolean = false,
     val checking: Boolean = false,
     val downloading: Boolean = false,
+    val downloadProgress: Int = 0,
     val latest: String? = null,
     val url: String = "",
     val apkUrl: String = "",
@@ -479,7 +481,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val current = runCatching {
                     getApplication<Application>().packageManager
                         .getPackageInfo(getApplication<Application>().packageName, 0).versionName
-                }.getOrNull() ?: "1.2.3"
+                }.getOrNull() ?: "1.2.4"
                 val info = updateChecker.check(current)
                 updateCheck = if (info == null) {
                     UpdateCheckState(show = true, latest = current)
@@ -518,10 +520,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             toast = "请先允许安装未知应用"
             return
         }
-        updateCheck = state.copy(downloading = true, error = null)
+        updateCheck = state.copy(downloading = true, downloadProgress = 0, error = null)
         viewModelScope.launch {
             try {
-                val file = apkUpdater.download(context, state.apkUrl)
+                val file = apkUpdater.download(context, state.apkUrl) { progress ->
+                    viewModelScope.launch(Dispatchers.Main) {
+                        updateCheck = updateCheck.copy(downloadProgress = progress)
+                    }
+                }
                 val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
                 val install = Intent(Intent.ACTION_VIEW)
                     .setDataAndType(uri, "application/vnd.android.package-archive")
@@ -818,7 +824,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 " | 截止=" + (it.deadlineAt ?: "无") + " | 地点=" + it.location +
                 " | 分类=" + it.category + " | 已完成=" + it.done
         }.ifBlank { "（暂无日程）" }
+        val nowText = now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm EEEE", Locale.CHINA))
+        val today = now.toLocalDate()
         return DEFAULT_PERSONA + custom +
+            "\n\n当前时间：" + nowText +
+            "\n今天=" + today + "，明天=" + today.plusDays(1) + "，后天=" + today.plusDays(2) +
+            "\n相对日期必须使用上面的日期；不要使用训练数据里的年份/月份。" +
+            "\n如果你具备联网搜索结果就使用；只有[联网搜索未返回结果]时才说这次没查到，不要说自己不能联网。" +
             "\n\n现有日程：\n" + eventsText +
             "\n\n" + CHAT_ACTION_SCHEMA
     }
@@ -974,8 +986,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
 private const val DEFAULT_PERSONA = """你是「校程」的日程助手，说话简洁、可靠，像一位细心的同学。
 你可以正常聊天、解释、给建议，也可以整理校园通知、网页内容和日程的增删改查。
-只有当问题明显与日程无关且需要大量计算或长篇专业处理（例如完整解数学题、写长代码、代写论文）时，才用一两句话礼貌拒绝，避免消耗 token；普通问好、闲聊、简单问答可以正常回应。
-不要编造日程或网页内容。用户要求修改日程时，只能使用给定日程列表里的 id；找不到就明确说没找到。
+用户可以明确要求“随机/示例/编一个”日程；这种情况可以生成，并在 reply 或 note 里注明“示例/随机”，不要拒绝。
+只有用户没有明确要求时，不要编造真实通知、链接、地点或截止时间；用户要求修改已有日程时，只能使用给定日程列表里的 id。
+对于过于复杂且与本应用无关的问题（例如完整解数学题、写长代码、代写论文），用一两句话礼貌拒绝，避免消耗 token；普通问好、闲聊、简单问答、随机日程可以正常完成。
 回答尽量短，优先通过 actions 完成操作，不要长篇解释。"""
 
 private const val CHAT_ACTION_SCHEMA = """请严格输出 JSON，不要输出 Markdown 代码块：

@@ -24,9 +24,14 @@ class UpdateChecker {
 
     suspend fun check(currentVersion: String): UpdateInfo? = withContext(Dispatchers.IO) {
         try {
-            checkApi(currentVersion)
+            return@withContext checkApi(currentVersion)
         } catch (e: Exception) {
-            checkWeb(currentVersion) ?: throw e
+            // API 失败时网页兜底；网页返回“没有新版本”也是成功结果，不能当成失败。
+            return@withContext try {
+                checkWeb(currentVersion)
+            } catch (webError: Exception) {
+                throw e
+            }
         }
     }
 
@@ -64,19 +69,47 @@ class UpdateChecker {
         )
     }
 
-    /** API 被代理/VPN 拦截时，退回到 GitHub Release 网页重定向。 */
+    /** API 被代理/VPN 拦截时，退回到 Release 页面 / Atom 源。 */
     private fun checkWeb(currentVersion: String): UpdateInfo? {
+        try {
+            val req = Request.Builder()
+                .url("https://github.com/siye4366/xiaocheng-Tool/releases/latest")
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36")
+                .build()
+            http.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) throw IOException("网页返回 " + resp.code)
+                val finalUrl = resp.request.url.toString()
+                val tag = Regex("""/releases/tag/v?([^/?#]+)""").find(finalUrl)?.groupValues?.getOrNull(1)
+                    ?: throw IOException("没有找到版本标签")
+                val version = tag.trim()
+                if (version.isBlank() || compare(version, currentVersion) <= 0) return null
+                return UpdateInfo(
+                    version = version,
+                    url = "https://github.com/siye4366/xiaocheng-Tool/releases/tag/v" + version,
+                    notes = "",
+                    apkUrl = "https://github.com/siye4366/xiaocheng-Tool/releases/download/v" + version +
+                        "/xiaocheng-v" + version + ".apk",
+                )
+            }
+        } catch (e: Exception) {
+            return checkAtom(currentVersion)
+        }
+    }
+
+    private fun checkAtom(currentVersion: String): UpdateInfo? {
         val req = Request.Builder()
-            .url("https://github.com/siye4366/xiaocheng-Tool/releases/latest")
+            .url("https://github.com/siye4366/xiaocheng-Tool/releases.atom")
             .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36")
             .build()
         http.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) throw IOException("网页返回 " + resp.code)
-            val finalUrl = resp.request.url.toString()
-            val tag = Regex("""/releases/tag/v?([^/?#]+)""").find(finalUrl)?.groupValues?.getOrNull(1)
-                ?: throw IOException("没有找到版本标签")
-            val version = tag.trim()
-            if (version.isBlank() || compare(version, currentVersion) <= 0) return null
+            if (!resp.isSuccessful) throw IOException("Atom 返回 " + resp.code)
+            val body = resp.body?.string().orEmpty()
+            val version = Regex("""/releases/tag/v?([0-9]+\.[0-9]+\.[0-9]+)""")
+                .findAll(body)
+                .map { it.groupValues[1] }
+                .maxByOrNull { it.split(".").map { n -> n.toIntOrNull() ?: 0 }.let { p -> p[0] * 10000 + p[1] * 100 + p[2] } }
+                ?: return null
+            if (compare(version, currentVersion) <= 0) return null
             return UpdateInfo(
                 version = version,
                 url = "https://github.com/siye4366/xiaocheng-Tool/releases/tag/v" + version,

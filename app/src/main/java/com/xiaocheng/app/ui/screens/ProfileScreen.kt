@@ -42,6 +42,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -172,7 +173,7 @@ fun ProfileScreen(vm: MainViewModel) {
         SettingRow(
             icon = Icons.Filled.Refresh,
             title = "检查更新",
-            subtitle = "当前 1.2.3",
+            subtitle = "当前 1.2.4",
             onClick = { vm.checkForUpdates() },
         )
         Spacer(Modifier.height(30.dp))
@@ -481,7 +482,7 @@ private fun FeatureSettingsDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                         OutlinedTextField(
                             value = req,
                             onValueChange = { req = it },
-                            placeholder = { Text("例如：说话简洁，只处理日程…") },
+                            placeholder = { Text("例如：说话简洁，随机日程也可以生成…") },
                             minLines = 4,
                             maxLines = 8,
                             modifier = Modifier.fillMaxWidth(),
@@ -581,17 +582,26 @@ private fun UpdateCheckDialog(vm: MainViewModel, context: Context) {
         text = {
             Column(modifier = Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState())) {
                 when {
-                    state.downloading -> Text("正在下载安装包…", color = Muted)
+                    state.downloading -> Column {
+                        Text("正在下载安装包… " + state.downloadProgress + "%", color = Muted)
+                        Spacer(Modifier.height(8.dp))
+                        LinearProgressIndicator(
+                            progress = { state.downloadProgress / 100f },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = Pine,
+                            trackColor = Line.copy(alpha = 0.4f),
+                        )
+                    }
                     state.checking -> Text("检查中…", color = Muted)
                     state.error != null -> Text(state.error, color = Coral)
                     state.isNew -> {
-                        Text("当前 1.2.3 → v" + (state.latest ?: ""), style = MaterialTheme.typography.bodyMedium)
+                        Text("当前 1.2.4 → v" + (state.latest ?: ""), style = MaterialTheme.typography.bodyMedium)
                         if (state.notes.isNotBlank()) {
                             Spacer(Modifier.height(8.dp))
                             Text(state.notes.take(600), style = MaterialTheme.typography.bodySmall, color = Muted)
                         }
                     }
-                    else -> Text("当前已是最新版本 " + (state.latest ?: "1.2.3") + "。")
+                    else -> Text("当前已是最新版本 " + (state.latest ?: "1.2.4") + "。")
                 }
             }
         },
@@ -610,7 +620,7 @@ private fun UpdateCheckDialog(vm: MainViewModel, context: Context) {
                         enabled = !state.downloading && state.apkUrl.isNotBlank(),
                         colors = ButtonDefaults.buttonColors(containerColor = Pine, contentColor = CardWhite),
                         shape = RoundedCornerShape(12.dp),
-                    ) { Text(if (state.downloading) "下载中…" else "一键更新") }
+                    ) { Text(if (state.downloading) "下载中 " + state.downloadProgress + "%" else "一键更新") }
                 }
             } else {
                 TextButton(onClick = { vm.dismissUpdateCheck() }) { Text("知道了", color = Pine) }
