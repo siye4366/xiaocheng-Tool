@@ -61,6 +61,10 @@ class UpdateChecker {
                 }
             }
         }
+        if (apkUrl.isBlank()) {
+            apkUrl = "https://github.com/siye4366/xiaocheng-Tool/releases/download/v" + tag +
+                "/xiaocheng-v" + tag + ".apk"
+        }
         return UpdateInfo(
             version = tag,
             url = json.optString("html_url").ifBlank { "https://github.com/siye4366/xiaocheng-Tool/releases" },

@@ -481,7 +481,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val current = runCatching {
                     getApplication<Application>().packageManager
                         .getPackageInfo(getApplication<Application>().packageName, 0).versionName
-                }.getOrNull() ?: "1.2.4"
+                }.getOrNull() ?: "1.2.5"
                 val info = updateChecker.check(current)
                 updateCheck = if (info == null) {
                     UpdateCheckState(show = true, latest = current)
@@ -523,11 +523,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         updateCheck = state.copy(downloading = true, downloadProgress = 0, error = null)
         viewModelScope.launch {
             try {
-                val file = apkUpdater.download(context, state.apkUrl) { progress ->
+                diag("更新", "开始下载 " + state.apkUrl + "，目标版本 " + state.latest)
+                val file = apkUpdater.download(context, state.apkUrl, state.latest.orEmpty()) { progress ->
                     viewModelScope.launch(Dispatchers.Main) {
                         updateCheck = updateCheck.copy(downloadProgress = progress)
                     }
                 }
+                val info = context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+                val downloaded = info?.versionName
+                if (!state.latest.isNullOrBlank() && downloaded != state.latest) {
+                    diag("更新", "下载版本不匹配：期望 " + state.latest + "，实际 " + downloaded)
+                    file.delete()
+                    throw IOException("下载到的安装包版本是 " + (downloaded ?: "未知") + "，不是 " + state.latest)
+                }
+                diag("更新", "下载完成，版本 " + downloaded)
                 val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
                 val install = Intent(Intent.ACTION_VIEW)
                     .setDataAndType(uri, "application/vnd.android.package-archive")

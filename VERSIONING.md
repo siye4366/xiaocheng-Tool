@@ -26,9 +26,9 @@
 | 对象 | 规则 | 示例 |
 |---|---|---|
 | 应用显示名 | 固定「校程」 | 校程 |
-| 安装包文件 | xiaocheng-v版本号.apk | xiaocheng-v1.2.4.apk |
-| Git tag | v版本号 | v1.2.4 |
-| GitHub Release 标题 | v版本号 | v1.2.4 |
-| Release 附件 | 与安装包同名 | xiaocheng-v1.2.4.apk |
+| 安装包文件 | xiaocheng-v版本号.apk | xiaocheng-v1.2.5.apk |
+| Git tag | v版本号 | v1.2.5 |
+| GitHub Release 标题 | v版本号 | v1.2.5 |
+| Release 附件 | 与安装包同名 | xiaocheng-v1.2.5.apk |
 
 发布时 tag、Release 标题、APK 文件名三者的版本号必须一致。

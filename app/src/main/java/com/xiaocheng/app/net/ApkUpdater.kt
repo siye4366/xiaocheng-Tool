@@ -20,10 +20,17 @@ class ApkUpdater {
     suspend fun download(
         context: Context,
         url: String,
+        version: String,
         onProgress: (Int) -> Unit,
     ): File = withContext(Dispatchers.IO) {
         if (url.isBlank()) throw IOException("没有下载地址")
-        val out = File(context.cacheDir, "xiaocheng-update.apk")
+        val safeVersion = version.replace(Regex("[^0-9.]"), "_").ifBlank { "latest" }
+        val out = File(context.cacheDir, "xiaocheng-update-" + safeVersion + ".apk")
+        context.cacheDir.listFiles()?.forEach { old ->
+            if (old.name.startsWith("xiaocheng-update") && old.absolutePath != out.absolutePath) {
+                runCatching { old.delete() }
+            }
+        }
         if (out.exists()) out.delete()
         val req = Request.Builder()
             .url(url)
