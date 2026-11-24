@@ -13,8 +13,8 @@ android {
         applicationId = "com.xiaocheng.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 10202
-        versionName = "1.2.2"
+        versionCode = 10203
+        versionName = "1.2.3"
         vectorDrawables { useSupportLibrary = true }
     }
 

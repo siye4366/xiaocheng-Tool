@@ -33,7 +33,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -98,6 +102,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val webSearch = WebSearch()
     private val networkTime = NetworkTime()
     private val apkUpdater = ApkUpdater()
+    private val diagnostics = mutableListOf<String>()
 
     val repo = ScheduleRepository(prefs)
     val events = repo.events
@@ -474,7 +479,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val current = runCatching {
                     getApplication<Application>().packageManager
                         .getPackageInfo(getApplication<Application>().packageName, 0).versionName
-                }.getOrNull() ?: "1.2.2"
+                }.getOrNull() ?: "1.2.3"
                 val info = updateChecker.check(current)
                 updateCheck = if (info == null) {
                     UpdateCheckState(show = true, latest = current)
@@ -562,8 +567,51 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         toast = "已应用 " + actions.size + " 个日程操作"
     }
 
+    private fun diag(tag: String, text: String) {
+        val time = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+        diagnostics.add("[" + time + "] " + tag + "：" + text.take(6000))
+        while (diagnostics.size > 400) diagnostics.removeAt(0)
+    }
+
+    fun buildDiagnosticText(): String {
+        val app = getApplication<Application>()
+        val version = runCatching {
+            app.packageManager.getPackageInfo(app.packageName, 0).versionName
+        }.getOrNull() ?: "unknown"
+        val sb = StringBuilder()
+        sb.appendLine("校程诊断日志")
+        sb.appendLine("版本：" + version)
+        sb.appendLine("时间：" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")))
+        sb.appendLine("接口：" + apiBase)
+        sb.appendLine("模型：" + apiModel)
+        sb.appendLine("已配置 Key：" + hasApiKey)
+        sb.appendLine("AI 模式：" + aiMode)
+        sb.appendLine("经典版引擎：" + if (useLocalEngine) "本地" else "大模型")
+        sb.appendLine("联网搜索：" + webSearchEnabled)
+        sb.appendLine()
+        sb.appendLine("===== 对话 =====")
+        if (chatMessages.isEmpty()) {
+            sb.appendLine("（无）")
+        } else {
+            chatMessages.forEach {
+                sb.appendLine("[" + it.role + "] " + it.content)
+                sb.appendLine()
+            }
+        }
+        sb.appendLine("===== 运行日志 =====")
+        sb.appendLine(diagnostics.joinToString("\n"))
+        return sb.toString()
+    }
+
+    fun exportDiagnostics(context: Context): File {
+        val file = File(context.cacheDir, "xiaocheng-diagnostics.txt")
+        file.writeText(buildDiagnosticText(), Charsets.UTF_8)
+        return file
+    }
+
     fun sendChat(text: String) {
         val message = text.trim()
+        diag("用户", message)
         if (message.isEmpty()) return
         if (!hasApiKey) {
             chatError = "请先在「个人 → AI 配置」里填写 API Key"
@@ -583,40 +631,56 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val now = networkTime.now() ?: LocalDateTime.now()
                 if (isDateTimeQuestion(message)) {
-                    chatMessages = chatMessages + ChatMessage(
-                        "assistant",
-                        "今天是 " + now.format(DateTimeFormatter.ofPattern("yyyy年M月d日，EEEE", Locale.CHINA)) +
-                            "，当前时间 " + now.format(DateTimeFormatter.ofPattern("HH:mm")) + "。",
-                    )
+                    val dateAnswer = "今天是 " +
+                        now.format(DateTimeFormatter.ofPattern("yyyy年M月d日，EEEE", Locale.CHINA)) +
+                        "，当前时间 " + now.format(DateTimeFormatter.ofPattern("HH:mm")) + "。"
+                    diag("日期直答", dateAnswer)
+                    chatMessages = chatMessages + ChatMessage("assistant", dateAnswer)
                     return@launch
                 }
+                val relativeDate = resolveRelativeDate(message, now)
+                val dateHint = if (relativeDate != null) {
+                    "\n\n【日期参考】用户说的相对日期是 " +
+                        relativeDate.format(DateTimeFormatter.ofPattern("yyyy-MM-dd EEEE", Locale.CHINA)) +
+                        "。所有 actions 必须使用这个日期，不要用训练数据里的日期。"
+                } else ""
                 val pageUrl = Regex("""https?://[^\s，。；）)]+""").find(message)?.value
                 val page = pageUrl?.let {
                     runCatching { fetcher.fetchPageContent(it) }.getOrNull()
                 }
+                val needSearch = page == null && webSearchEnabled && shouldSearch(message)
+                val searchContext = if (needSearch) buildSearchContext(message) else ""
                 val userContent = if (page != null) {
                     message + "\n\n[网页内容：" + page.title + "]\n" +
                         page.text.take(5000) +
                         if (page.links.isNotEmpty()) {
                             "\n\n页面链接：\n" + page.links.take(40).joinToString("\n") { "- " + it.title + " | " + it.url }
                         } else ""
-                } else message
+                } else message + dateHint + searchContext + if (needSearch && searchContext.isBlank()) {
+                    "\n\n[联网搜索未返回结果]"
+                } else ""
                 val history = chatMessages.dropLast(1)
                     .filter { it.role == "user" || it.role == "assistant" }
                     .map { ChatTurn(it.role, it.content) }
                 val raw = llm.chat(llmConfig(), buildChatSystemPrompt(now), history, userContent)
+                diag("模型原始", raw)
                 val json = runCatching { parseJsonObject(raw) }.getOrNull()
                 var reply = json?.optString("reply")?.trim().orEmpty().ifBlank { raw.trim() }
                 val actions = json?.let { parseActions(it) } ?: emptyList()
-                if (actions.isNotEmpty()) {
-                    val descriptions = actions.map { describeAction(it) }
+                val normalizedActions = normalizeActions(actions, message, relativeDate)
+                if (normalizedActions.isNotEmpty()) {
+                    diag("解析操作", normalizedActions.joinToString("; ") { it.type + " " + it.id + " " + it.fields })
+                }
+                if (normalizedActions.isNotEmpty()) {
+                    val descriptions = normalizedActions.map { describeAction(it) }
                     if (autoApplyActions) {
-                        val results = executeActions(actions)
+                        val results = executeActions(normalizedActions)
+                        diag("执行结果", results.joinToString("; "))
                         reply += "\n\n" + results.joinToString("\n")
                     } else {
-                        pendingActions = actions
+                        pendingActions = normalizedActions
                         pendingDescriptions = descriptions
-                        reply += "\n\n准备执行 " + actions.size + " 个操作：\n" +
+                        reply += "\n\n准备执行 " + normalizedActions.size + " 个操作：\n" +
                             descriptions.joinToString("\n") +
                             "\n\n确认后点下方「应用修改」。"
                     }
@@ -625,6 +689,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                diag("错误", e.message ?: "对话失败")
                 chatError = e.message ?: "对话失败"
             } finally {
                 chatLoading = false
@@ -758,6 +823,61 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             "\n\n" + CHAT_ACTION_SCHEMA
     }
 
+    private fun resolveRelativeDate(text: String, now: LocalDateTime): LocalDate? {
+        val t = text.replace(" ", "")
+        val today = now.toLocalDate()
+        return when {
+            t.contains("dayaftertomorrow", ignoreCase = true) -> today.plusDays(2)
+            t.contains("后天") -> today.plusDays(2)
+            t.contains("明天") || t.contains("明日") || t.contains("tomorrow", ignoreCase = true) -> today.plusDays(1)
+            t.contains("今天") || t.contains("今日") || t.contains("today", ignoreCase = true) -> today
+            else -> {
+                val m = Regex("""下(?:个)?(?:周|星期)([一二三四五六日天])""").find(t)
+                if (m != null) {
+                    val map = mapOf("一" to 1, "二" to 2, "三" to 3, "四" to 4, "五" to 5, "六" to 6, "日" to 7, "天" to 7)
+                    val target = map[m.groupValues[1]] ?: return null
+                    var delta = target - today.dayOfWeek.value
+                    if (delta <= 0) delta += 7
+                    today.plusDays(delta.toLong())
+                } else null
+            }
+        }
+    }
+
+    private fun normalizeActions(
+        actions: List<AiAction>,
+        message: String,
+        date: LocalDate?,
+    ): List<AiAction> {
+        if (date == null) return actions
+        val wantsStart = message.contains("开始") || message.contains("日程") || message.contains("活动") ||
+            message.contains("event", ignoreCase = true) || message.contains("schedule", ignoreCase = true)
+        return actions.map { action ->
+            if (action.type != "add" && action.type != "update") return@map action
+            val f = LinkedHashMap(action.fields)
+            if (f.containsKey("start")) {
+                val v = f["start"]
+                f["start"] = if (v == null && action.type == "add" && wantsStart) {
+                    date.atTime(9, 0).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+                } else if (v != null) withDate(v, date, LocalTime.of(9, 0)) else v
+            } else if (action.type == "add" && wantsStart) {
+                f["start"] = date.atTime(9, 0).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+            }
+            if (f.containsKey("deadline") && f["deadline"] != null) {
+                f["deadline"] = withDate(f["deadline"]!!, date, LocalTime.of(10, 0))
+            }
+            action.copy(fields = f)
+        }
+    }
+
+    private fun withDate(value: String, date: LocalDate, defaultTime: LocalTime): String {
+        val millis = LlmClient.parseTime(value)
+        val time = if (millis != null) {
+            LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault()).toLocalTime()
+        } else defaultTime
+        return date.atTime(time).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+    }
+
     private fun isDateTimeQuestion(text: String): Boolean {
         val t = text.replace(" ", "")
         return listOf(
@@ -775,12 +895,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val triggers = listOf(
             "查", "搜", "最新", "新闻", "现在", "今天", "明天", "多少", "哪",
             "什么时候", "推荐", "天气", "价格", "是谁", "为什么", "怎么", "介绍", "翻译",
+            "联网", "上网", "搜索",
         )
         return triggers.any { t.contains(it) } || t.contains("?") || t.contains("？")
     }
 
     private suspend fun buildSearchContext(query: String): String {
         val results = runCatching { webSearch.search(query, 5) }.getOrDefault(emptyList())
+        diag("联网搜索", "关键词=" + query + " 结果=" + results.size)
         if (results.isEmpty()) return ""
         return "\n\n[联网搜索结果，可能不完整，请自行判断]\n" + results.joinToString("\n") {
             "- " + it.title + "\n  " + it.snippet.take(180) + "\n  " + it.url

@@ -154,6 +154,12 @@ fun ProfileScreen(vm: MainViewModel) {
         Spacer(Modifier.height(18.dp))
         SectionHeader("数据管理", -1, muted = false)
         SettingRow(
+            icon = Icons.Filled.Share,
+            title = "导出诊断日志",
+            subtitle = "对话、错误和操作记录",
+            onClick = { shareDiagnostics(context, vm) },
+        )
+        SettingRow(
             icon = Icons.Filled.Refresh,
             title = "清空全部日程",
             subtitle = "共 " + events.size + " 条",
@@ -166,7 +172,7 @@ fun ProfileScreen(vm: MainViewModel) {
         SettingRow(
             icon = Icons.Filled.Refresh,
             title = "检查更新",
-            subtitle = "当前 1.2.2",
+            subtitle = "当前 1.2.3",
             onClick = { vm.checkForUpdates() },
         )
         Spacer(Modifier.height(30.dp))
@@ -489,13 +495,6 @@ private fun FeatureSettingsDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                             ),
                         )
                         Text("修改后点「保存」生效。", style = MaterialTheme.typography.labelSmall, color = Muted)
-                    } else {
-                        Text("经典版", style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            "没有额外设置；大模型 / 本地开关在 AI 页顶部。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Muted,
-                        )
                     }
 
                     Text("API 额度", style = MaterialTheme.typography.titleSmall)
@@ -586,13 +585,13 @@ private fun UpdateCheckDialog(vm: MainViewModel, context: Context) {
                     state.checking -> Text("检查中…", color = Muted)
                     state.error != null -> Text(state.error, color = Coral)
                     state.isNew -> {
-                        Text("当前 1.2.2 → v" + (state.latest ?: ""), style = MaterialTheme.typography.bodyMedium)
+                        Text("当前 1.2.3 → v" + (state.latest ?: ""), style = MaterialTheme.typography.bodyMedium)
                         if (state.notes.isNotBlank()) {
                             Spacer(Modifier.height(8.dp))
                             Text(state.notes.take(600), style = MaterialTheme.typography.bodySmall, color = Muted)
                         }
                     }
-                    else -> Text("当前已是最新版本 " + (state.latest ?: "1.2.2") + "。")
+                    else -> Text("当前已是最新版本 " + (state.latest ?: "1.2.3") + "。")
                 }
             }
         },
@@ -621,6 +620,22 @@ private fun UpdateCheckDialog(vm: MainViewModel, context: Context) {
             { TextButton(onClick = { vm.dismissUpdateCheck() }) { Text("关闭", color = Muted) } }
         } else null,
     )
+}
+
+private fun shareDiagnostics(context: Context, vm: MainViewModel) {
+    try {
+        val file = vm.exportDiagnostics(context)
+        val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, "校程诊断日志")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(send, "导出校程诊断日志"))
+    } catch (e: Exception) {
+        Toast.makeText(context, "导出失败：" + (e.message ?: "未知错误"), Toast.LENGTH_SHORT).show()
+    }
 }
 
 private fun shareIcs(context: Context, vm: MainViewModel) {
