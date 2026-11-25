@@ -120,8 +120,17 @@ fun HomeScreen(vm: MainViewModel) {
         }
     }
 
+    val today = remember(events, now) {
+        events.filter { it.isActiveToday(now) }.sortedWith(
+            compareBy<ScheduleEvent>(
+                { it.sortTime(now) ?: Long.MAX_VALUE },
+                { if (it.sortIsDeadline(now)) 0 else 1 },
+                { it.title },
+            )
+        )
+    }
     val upcoming = remember(events, now) {
-        events.filter { !it.isOverdue(now) }.sortedWith(
+        events.filter { !it.isOverdue(now) && !it.isActiveToday(now) }.sortedWith(
             compareBy<ScheduleEvent>(
                 { it.sortTime(now) ?: Long.MAX_VALUE },
                 { if (it.sortIsDeadline(now)) 0 else 1 },
@@ -135,7 +144,7 @@ fun HomeScreen(vm: MainViewModel) {
                 .thenBy { if (it.sortIsDeadline(now)) 0 else 1 }
         )
     }
-    val todayCount = events.count { it.isActiveToday(now) }
+    val todayCount = today.size
     val allSelected = events.isNotEmpty() && selectedIds.size == events.size
 
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
@@ -185,6 +194,28 @@ fun HomeScreen(vm: MainViewModel) {
                             colors = ButtonDefaults.buttonColors(containerColor = Pine, contentColor = CardWhite),
                         ) { Text("手动添加") }
                     },
+                )
+            }
+        }
+        if (today.isNotEmpty()) {
+            item { SectionHeader("今天", today.size) }
+            items(today, key = { "today-" + it.id }) { event ->
+                EventCard(
+                    event = event,
+                    now = now,
+                    expired = false,
+                    selecting = selecting,
+                    selected = event.id in selectedIds,
+                    onClick = { editing = event },
+                    onLongClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        if (selecting) toggleSelect(event.id) else {
+                            selecting = true
+                            selectedIds = setOf(event.id)
+                        }
+                    },
+                    onToggleDone = { vm.toggleDone(event.id) },
+                    onSelectToggle = { toggleSelect(event.id) },
                 )
             }
         }

@@ -27,6 +27,7 @@ import com.xiaocheng.app.net.ApkUpdater
 import com.xiaocheng.app.net.NetworkTime
 import com.xiaocheng.app.net.UpdateChecker
 import com.xiaocheng.app.net.WebSearch
+import com.xiaocheng.app.util.formatFull
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -482,7 +483,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val current = runCatching {
                     getApplication<Application>().packageManager
                         .getPackageInfo(getApplication<Application>().packageName, 0).versionName
-                }.getOrNull() ?: "1.3.0"
+                }.getOrNull() ?: "1.3.1"
                 val info = updateChecker.check(current)
                 updateCheck = if (info == null) {
                     UpdateCheckState(show = true, latest = current)
@@ -692,7 +693,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (autoApplyActions) {
                         val results = executeActions(normalizedActions)
                         diag("执行结果", results.joinToString("; "))
-                        reply += "\n\n" + results.joinToString("\n")
+                        reply += "\n\n" + descriptions.joinToString("\n") +
+                            "\n\n" + results.joinToString("\n")
                     } else {
                         pendingActions = normalizedActions
                         pendingDescriptions = descriptions
@@ -727,7 +729,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
             val type = o.optString("type").trim()
-            if (type !in listOf("add", "update", "delete", "complete", "uncomplete")) continue
+            if (type !in listOf("add", "update", "delete", "complete", "uncomplete", "clear_done", "clear_expired")) continue
             val fieldsObj = o.optJSONObject("fields") ?: o
             val fields = LinkedHashMap<String, String?>()
             for (key in keys) {
@@ -747,16 +749,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun describeAction(action: AiAction): String {
-        val title = events.value.firstOrNull { it.id == action.id }?.title
+        if (action.type == "clear_done") {
+            val count = events.value.count { it.done }
+            return "清除已完成：共 " + count + " 条"
+        }
+        if (action.type == "clear_expired") {
+            val count = events.value.count { it.isOverdue() }
+            return "清除已到期：共 " + count + " 条（含已完成）"
+        }
+        val old = events.value.firstOrNull { it.id == action.id }
+        val f = action.fields
         return when (action.type) {
-            "add" -> "新增日程：" + (action.fields["title"] ?: "未命名")
-            "update" -> "修改日程：" + (title ?: action.id)
-            "delete" -> "删除日程：" + (title ?: action.id)
-            "complete" -> "标记完成：" + (title ?: action.id)
-            "uncomplete" -> "取消完成：" + (title ?: action.id)
+            "add" -> buildList {
+                add("新增：" + (f["title"] ?: "未命名"))
+                f["start"]?.let { add("开始：" + timeOrRaw(it)) }
+                f["deadline"]?.let { add("截止：" + timeOrRaw(it)) }
+                f["location"]?.takeIf { it.isNotBlank() }?.let { add("地点：" + it) }
+                f["category"]?.takeIf { it.isNotBlank() }?.let { add("分类：" + it) }
+                f["note"]?.takeIf { it.isNotBlank() }?.let { add("备注：" + it) }
+            }.joinToString("\n")
+            "update" -> buildList {
+                add("修改：" + (old?.title ?: action.id))
+                f["title"]?.let { add("标题：" + (old?.title ?: "") + " → " + it) }
+                if (f.containsKey("start")) add("开始：" + oldTime(old?.startAt) + " → " + timeOrRaw(f["start"]))
+                if (f.containsKey("deadline")) add("截止：" + oldTime(old?.deadlineAt) + " → " + timeOrRaw(f["deadline"]))
+                if (f.containsKey("location")) add("地点：" + (old?.location ?: "") + " → " + f["location"].orEmpty())
+                if (f.containsKey("category")) add("分类：" + (old?.category ?: "") + " → " + f["category"].orEmpty())
+                if (f.containsKey("note")) add("备注：" + (old?.note ?: "") + " → " + f["note"].orEmpty())
+            }.joinToString("\n")
+            "delete" -> "删除：" + (old?.title ?: action.id)
+            "complete" -> "标记完成：" + (old?.title ?: action.id)
+            "uncomplete" -> "取消完成：" + (old?.title ?: action.id)
             else -> action.type
         }
     }
+
+    private fun timeOrRaw(value: String?): String {
+        if (value.isNullOrBlank() || value == "null") return "未设置"
+        val millis = LlmClient.parseTime(value)
+        return if (millis != null) formatFull(millis) else value
+    }
+
+    private fun oldTime(value: Long?): String = value?.let { formatFull(it) } ?: "未设置"
 
     private fun executeActions(actions: List<AiAction>): List<String> {
         val results = ArrayList<String>()
@@ -820,6 +854,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     } else {
                         repo.markUndone(setOf(ev.id))
                         results.add("已取消完成：" + ev.title)
+                    }
+                }
+                "clear_done" -> {
+                    val ids = events.value.filter { it.done }.map { it.id }.toSet()
+                    if (ids.isEmpty()) {
+                        results.add("没有已完成日程")
+                    } else {
+                        repo.deleteMany(ids)
+                        results.add("已清除 " + ids.size + " 条已完成")
+                    }
+                }
+                "clear_expired" -> {
+                    val ids = events.value.filter { it.isOverdue() }.map { it.id }.toSet()
+                    if (ids.isEmpty()) {
+                        results.add("没有已到期日程")
+                    } else {
+                        repo.deleteMany(ids)
+                        results.add("已清除 " + ids.size + " 条已到期")
                     }
                 }
             }
@@ -1044,10 +1096,10 @@ private const val DEFAULT_PERSONA = """你是「校程」的日程助手，说�
 回答尽量短，优先通过 actions 完成操作，不要长篇解释。"""
 
 private const val CHAT_ACTION_SCHEMA = """请严格输出 JSON，不要输出 Markdown 代码块：
-{"reply":"给用户的简短中文回复","actions":[{"type":"add","fields":{"title":"事件名","start":"YYYY-MM-DD HH:mm 或 null","deadline":"YYYY-MM-DD HH:mm 或 null","location":"","link":"","category":"竞赛|讲座|活动|就业|志愿|考试|其他","note":""}},{"type":"update","id":"现有日程id","fields":{"title":"只填需要改的字段"}},{"type":"delete","id":"现有日程id"},{"type":"complete","id":"现有日程id"},{"type":"uncomplete","id":"现有日程id"}]}
+{"reply":"给用户的简短中文回复","actions":[{"type":"add","fields":{"title":"事件名","start":"YYYY-MM-DD HH:mm 或 null","deadline":"YYYY-MM-DD HH:mm 或 null","location":"","link":"","category":"竞赛|讲座|活动|就业|志愿|考试|其他","note":""}},{"type":"update","id":"现有日程id","fields":{"title":"只填需要改的字段"}},{"type":"delete","id":"现有日程id"},{"type":"complete","id":"现有日程id"},{"type":"uncomplete","id":"现有日程id"},{"type":"clear_done"},{"type":"clear_expired"}]}
 
 规则：
 1. 普通聊天、问候或不需要改日程时，actions 输出空数组。
-2. 新增日程用 add；修改用 update，fields 只放要改的字段；删除用 delete；完成/取消完成用 complete/uncomplete。
+2. 新增用 add；修改用 update，fields 只放要改的字段；删除用 delete；完成/取消完成用 complete/uncomplete；清理已完成用 clear_done，清理已到期用 clear_expired。
 3. 时间格式 YYYY-MM-DD HH:mm；没有时间填 null。不要编造 id。
 4. reply 要简短自然，不要复述 JSON，不要输出 JSON 以外的内容。"""

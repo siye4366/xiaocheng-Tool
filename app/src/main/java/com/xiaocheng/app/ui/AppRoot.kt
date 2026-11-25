@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -37,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -44,6 +46,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -55,7 +59,6 @@ import com.xiaocheng.app.ui.theme.Coral
 import com.xiaocheng.app.ui.theme.Ink
 import com.xiaocheng.app.ui.theme.Paper
 import kotlinx.coroutines.launch
-import androidx.compose.runtime.snapshotFlow
 
 private data class TabItem(val label: String, val kind: Int)
 
@@ -66,10 +69,20 @@ fun XiaoChengApp(vm: MainViewModel) {
     var selected by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    val focusManager = LocalFocusManager.current
+    val density = LocalDensity.current
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    var imeWasVisible by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        snapshotFlow { pager.currentPage }.collect { selected = it }
+    LaunchedEffect(imeBottom) {
+        if (imeBottom > 0) {
+            imeWasVisible = true
+        } else if (imeWasVisible) {
+            imeWasVisible = false
+            focusManager.clearFocus(force = true)
+        }
     }
+
     LaunchedEffect(vm.toast) {
         val msg = vm.toast
         if (msg != null) {
@@ -86,7 +99,10 @@ fun XiaoChengApp(vm: MainViewModel) {
         bottomBar = {
             XcBottomBar(selected) { target ->
                 if (target != selected) {
-                    if (target == 1 || selected == 1) vm.clearAiNotice()
+                    val from = selected
+                    focusManager.clearFocus(force = true)
+                    selected = target
+                    if (target == 1 || from == 1) vm.clearAiNotice()
                     scope.launch {
                         pager.animateScrollToPage(target, animationSpec = tween(420, easing = FastOutSlowInEasing))
                     }

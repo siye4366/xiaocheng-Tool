@@ -216,7 +216,7 @@ fun ProfileScreen(vm: MainViewModel) {
         SettingRow(
             icon = Icons.Filled.Refresh,
             title = "检查更新",
-            subtitle = "当前 1.3.0",
+            subtitle = "当前 1.3.1",
             onClick = { vm.checkForUpdates() },
         )
         Spacer(Modifier.height(30.dp))
@@ -753,13 +753,13 @@ private fun UpdateCheckDialog(vm: MainViewModel, context: Context) {
                     state.checking -> Text("检查中…", color = Muted)
                     state.error != null -> Text(state.error, color = Coral)
                     state.isNew -> {
-                        Text("当前 1.3.0 → v" + (state.latest ?: ""), style = MaterialTheme.typography.bodyMedium)
+                        Text("当前 1.3.1 → v" + (state.latest ?: ""), style = MaterialTheme.typography.bodyMedium)
                         if (state.notes.isNotBlank()) {
                             Spacer(Modifier.height(8.dp))
                             Text(state.notes.take(600), style = MaterialTheme.typography.bodySmall, color = Muted)
                         }
                     }
-                    else -> Text("当前已是最新版本 " + (state.latest ?: "1.3.0") + "。")
+                    else -> Text("当前已是最新版本 " + (state.latest ?: "1.3.1") + "。")
                 }
             }
         },

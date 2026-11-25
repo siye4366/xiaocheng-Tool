@@ -246,11 +246,25 @@ private fun PendingCard(vm: MainViewModel) {
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Text("准备修改日程", style = MaterialTheme.typography.titleSmall, color = Amber)
+            Text("确认后才会写入", style = MaterialTheme.typography.labelSmall, color = Amber)
             Spacer(Modifier.height(6.dp))
-            vm.pendingDescriptions.forEach { line ->
-                Text("· " + line, style = MaterialTheme.typography.bodySmall, color = Ink)
+            vm.pendingDescriptions.forEach { detail ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    color = CardWhite.copy(alpha = 0.75f),
+                ) {
+                    Text(
+                        detail,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Ink,
+                        lineHeight = 18.sp,
+                    )
+                }
+                Spacer(Modifier.height(5.dp))
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
             Row {
                 Button(
                     onClick = { vm.applyPendingActions() },
