@@ -93,6 +93,7 @@ fun EventEditorDialog(
             color = Paper,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
+                ClearFocusOnKeyboardHidden()
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(start = 22.dp, end = 12.dp, top = 18.dp, bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,

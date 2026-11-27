@@ -6,6 +6,7 @@ import org.json.JSONObject
 data class ApiProfile(
     val id: String,
     val name: String,
+    val displayName: String = "",
     val baseUrl: String,
     val model: String,
     val apiKey: String,
@@ -16,6 +17,7 @@ data class ApiProfile(
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
         put("name", name)
+        put("displayName", displayName)
         put("baseUrl", baseUrl)
         put("model", model)
         put("apiKey", apiKey)
@@ -28,6 +30,7 @@ data class ApiProfile(
         fun fromJson(o: JSONObject): ApiProfile = ApiProfile(
             id = o.optString("id"),
             name = o.optString("name"),
+            displayName = o.optString("displayName"),
             baseUrl = o.optString("baseUrl"),
             model = o.optString("model"),
             apiKey = o.optString("apiKey"),

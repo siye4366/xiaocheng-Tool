@@ -190,54 +190,60 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         prefs.apiModel = apiModel
 
         val provider = AiProviders.match(apiBase, apiModel)
-        val newId = when {
-            provider != null -> provider.id
-            !profileId.isNullOrBlank() && profileId.startsWith("custom-") -> profileId
-            else -> {
-                val existing = apiProfiles.firstOrNull {
-                    (it.id.startsWith("custom-") || it.id == "custom") &&
-                        it.baseUrl == apiBase && it.model == apiModel
-                }
-                existing?.id ?: ("custom-" + UUID.randomUUID().toString().take(8))
-            }
-        }
-        val name = provider?.name ?: apiModel.ifBlank { "自定义" }
-        val old = apiProfiles.firstOrNull { it.id == newId }
+        val editing = !profileId.isNullOrBlank() && apiProfiles.any { it.id == profileId }
+        val newId = if (editing) profileId!! else "api-" + UUID.randomUUID().toString().take(8)
         val others = apiProfiles.filter { it.id != newId }
+
         if (apiKey.isBlank()) {
-            apiProfiles = others
-            activeProfileId = ""
-            prefs.activeProfileId = ""
-        } else {
-            apiProfiles = others + ApiProfile(
-                id = newId,
-                name = name,
-                baseUrl = apiBase,
-                model = apiModel,
-                apiKey = apiKey,
-                lastUsed = old?.lastUsed ?: 0L,
-                cooldownUntil = old?.cooldownUntil ?: 0L,
-                lastError = old?.lastError.orEmpty(),
-            )
-            activeProfileId = newId
-            prefs.activeProfileId = newId
-        }
-        prefs.saveApiProfiles(apiProfiles)
-        if (autoApi && apiProfiles.none { it.apiKey.isNotBlank() }) {
-            autoApi = false
-            prefs.autoApi = false
+            if (editing) {
+                apiProfiles = others
+                prefs.saveApiProfiles(apiProfiles)
+                if (activeProfileId == newId) {
+                    activeProfileId = ""
+                    prefs.activeProfileId = ""
+                }
+            }
+            if (autoApi && apiProfiles.none { it.apiKey.isNotBlank() }) {
+                autoApi = false
+                prefs.autoApi = false
+            }
+            toast = if (editing) "已删除当前配置" else "先填写 API Key"
+            return ""
         }
 
-        if (!hadKey || apiKey.isBlank()) {
+        val used = others.map {
+            it.displayName.ifBlank { it.model.ifBlank { it.name } }
+        }.toMutableSet()
+        val baseLabel = apiModel.ifBlank { provider?.name ?: "自定义" }
+        var label = baseLabel
+        var index = 1
+        while (label in used) {
+            label = baseLabel + "（" + index + "）"
+            index++
+        }
+
+        val old = apiProfiles.firstOrNull { it.id == newId }
+        apiProfiles = others + ApiProfile(
+            id = newId,
+            name = provider?.name ?: "自定义",
+            displayName = label,
+            baseUrl = apiBase,
+            model = apiModel,
+            apiKey = apiKey,
+            lastUsed = old?.lastUsed ?: 0L,
+            cooldownUntil = old?.cooldownUntil ?: 0L,
+            lastError = old?.lastError.orEmpty(),
+        )
+        activeProfileId = newId
+        prefs.activeProfileId = newId
+        prefs.saveApiProfiles(apiProfiles)
+
+        if (!hadKey) {
             useLocalEngine = true
             prefs.useLocalEngine = true
         }
-        if (apiKey.isBlank() && aiMode == "combined") {
-            aiMode = "classic"
-            prefs.aiMode = aiMode
-        }
-        toast = if (apiKey.isBlank()) "已删除当前配置" else "已保存，可继续添加"
-        return if (apiKey.isBlank()) "" else newId
+        toast = if (editing) "已更新" else "已保存，可继续添加"
+        return newId
     }
 
     fun setAutoApiEnabled(enabled: Boolean) {
@@ -663,7 +669,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val current = runCatching {
                     getApplication<Application>().packageManager
                         .getPackageInfo(getApplication<Application>().packageName, 0).versionName
-                }.getOrNull() ?: "1.4.0"
+                }.getOrNull() ?: "1.4.1"
                 val info = updateChecker.check(current)
                 updateCheck = if (info == null) {
                     UpdateCheckState(show = true, latest = current)

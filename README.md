@@ -11,7 +11,7 @@
 - 支持 Android 8.0（API 26）及以上
 - 安装包命名：xiaocheng-v版本号.apk；GitHub Release 标题：v版本号
 
-当前版本：1.4.0（versionCode 10400），版本规则见 [VERSIONING.md](VERSIONING.md)。
+当前版本：1.4.1（versionCode 10401），版本规则见 [VERSIONING.md](VERSIONING.md)。
 
 ## 界面
 
@@ -62,7 +62,7 @@
 
 正式包：
 
-[dist/xiaocheng-v1.4.0.apk](dist/xiaocheng-v1.4.0.apk)
+[dist/xiaocheng-v1.4.1.apk](dist/xiaocheng-v1.4.1.apk)
 
 直接下载安装，需允许「安装未知来源应用」。Android 8.0 及以上。
 

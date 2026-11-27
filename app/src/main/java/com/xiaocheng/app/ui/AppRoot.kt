@@ -34,7 +34,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -45,13 +44,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import com.xiaocheng.app.MainViewModel
 import com.xiaocheng.app.ui.screens.AiScreen
 import com.xiaocheng.app.ui.screens.HomeScreen
@@ -71,34 +67,8 @@ fun XiaoChengApp(vm: MainViewModel) {
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val focusManager = LocalFocusManager.current
-    val view = LocalView.current
 
-    DisposableEffect(view) {
-        val handler = android.os.Handler(android.os.Looper.getMainLooper())
-        var pending: Runnable? = null
-        val hideCheck = Runnable {
-            val visible = ViewCompat.getRootWindowInsets(view)
-                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
-            if (!visible) focusManager.clearFocus(force = true)
-            pending = null
-        }
-        val listener = android.view.ViewTreeObserver.OnGlobalLayoutListener {
-            val visible = ViewCompat.getRootWindowInsets(view)
-                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
-            if (visible) {
-                pending?.let { handler.removeCallbacks(it) }
-                pending = null
-            } else if (pending == null) {
-                pending = hideCheck
-                handler.postDelayed(hideCheck, 500L)
-            }
-        }
-        view.viewTreeObserver.addOnGlobalLayoutListener(listener)
-        onDispose {
-            view.viewTreeObserver.removeOnGlobalLayoutListener(listener)
-            pending?.let { handler.removeCallbacks(it) }
-        }
-    }
+    ClearFocusOnKeyboardHidden()
 
     LaunchedEffect(vm.toast) {
         val msg = vm.toast

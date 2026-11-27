@@ -78,6 +78,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import androidx.compose.runtime.collectAsState
 import com.xiaocheng.app.MainViewModel
+import com.xiaocheng.app.ui.ClearFocusOnKeyboardHidden
 import com.xiaocheng.app.data.AiProviders
 import com.xiaocheng.app.data.ScheduleEvent
 import com.xiaocheng.app.ui.CircleIcon
@@ -221,7 +222,7 @@ fun ProfileScreen(vm: MainViewModel) {
         SettingRow(
             icon = Icons.Filled.Refresh,
             title = "检查更新",
-            subtitle = "当前 1.4.0",
+            subtitle = "当前 1.4.1",
             onClick = { vm.checkForUpdates() },
         )
         Spacer(Modifier.height(30.dp))
@@ -422,14 +423,17 @@ private fun NameDialog(current: String, onDismiss: () -> Unit, onSave: (String) 
         onDismissRequest = onDismiss,
         title = { Text("怎么称呼你？") },
         text = {
-            OutlinedTextField(
-                value = value,
-                onValueChange = { value = it },
-                singleLine = true,
-                label = { Text("昵称") },
-                shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Pine, unfocusedBorderColor = Line, cursorColor = Pine),
-            )
+            Column {
+                ClearFocusOnKeyboardHidden()
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    singleLine = true,
+                    label = { Text("昵称") },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Pine, unfocusedBorderColor = Line, cursorColor = Pine),
+                )
+            }
         },
         confirmButton = {
             TextButton(onClick = { onSave(value) }) { Text("保存", color = Pine) }
@@ -455,6 +459,7 @@ private fun AppSheet(
             color = Paper,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
+                ClearFocusOnKeyboardHidden()
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(start = 22.dp, end = 16.dp, top = 18.dp, bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -502,7 +507,7 @@ private fun ApiDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     vm.apiProfiles.filter { it.apiKey.isNotBlank() }.forEach { profile ->
-                        ProviderChip(profile.model.ifBlank { profile.name }, editingId == profile.id) {
+                        ProviderChip(profile.displayName.ifBlank { profile.model.ifBlank { profile.name } }, editingId == profile.id) {
                             editingId = profile.id
                             selectedRecommended = null
                             base = profile.baseUrl
@@ -523,7 +528,7 @@ private fun ApiDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                         editingId = null
                         base = provider.baseUrl
                         model = provider.model
-                        key = vm.apiProfiles.firstOrNull { it.id == provider.id }?.apiKey.orEmpty()
+                        key = ""
                     }
                 }
                 ProviderChip("自定义", selectedRecommended == "custom") {
@@ -620,10 +625,14 @@ private fun ApiDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                 onClick = {
                     val id = vm.saveApi(base, key, model, editingId)
                     if (id.isNotBlank()) {
-                        editingId = id
-                        selectedRecommended = null
-                    } else {
+                        // 保存后清空表单，下一次保存一定是一条新配置。
                         editingId = null
+                        selectedRecommended = null
+                        base = ""
+                        model = ""
+                        key = ""
+                    } else {
+                        editingId = vm.activeProfileId.ifBlank { null }
                     }
                     if (auto != vm.autoApi) vm.setAutoApiEnabled(auto)
                 },
@@ -752,6 +761,7 @@ private fun FeatureSettingsDialog(
             color = Paper,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
+                ClearFocusOnKeyboardHidden()
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(start = 22.dp, end = 16.dp, top = 18.dp, bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -905,13 +915,13 @@ private fun UpdateCheckDialog(vm: MainViewModel, context: Context) {
                     state.checking -> Text("检查中…", color = Muted)
                     state.error != null -> Text(state.error, color = Coral)
                     state.isNew -> {
-                        Text("当前 1.4.0 → v" + (state.latest ?: ""), style = MaterialTheme.typography.bodyMedium)
+                        Text("当前 1.4.1 → v" + (state.latest ?: ""), style = MaterialTheme.typography.bodyMedium)
                         if (state.notes.isNotBlank()) {
                             Spacer(Modifier.height(8.dp))
                             Text(state.notes.take(600), style = MaterialTheme.typography.bodySmall, color = Muted)
                         }
                     }
-                    else -> Text("当前已是最新版本 " + (state.latest ?: "1.4.0") + "。")
+                    else -> Text("当前已是最新版本 " + (state.latest ?: "1.4.1") + "。")
                 }
             }
         },
