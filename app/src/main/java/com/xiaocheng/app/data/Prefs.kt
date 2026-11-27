@@ -59,6 +59,29 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("auto_apply_actions", true)
         set(value) { sp.edit().putBoolean("auto_apply_actions", value).apply() }
 
+    var activeProfileId: String
+        get() = sp.getString("active_profile_id", "") ?: ""
+        set(value) { sp.edit().putString("active_profile_id", value).apply() }
+
+    /** 多套 API 配置；自动选择时在这些配置间轮换。 */
+    var autoApi: Boolean
+        get() = sp.getBoolean("auto_api", false)
+        set(value) { sp.edit().putBoolean("auto_api", value).apply() }
+
+    fun loadApiProfiles(): List<ApiProfile> {
+        val raw = sp.getString("api_profiles", "[]") ?: "[]"
+        return runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).map { ApiProfile.fromJson(arr.getJSONObject(it)) }
+        }.getOrDefault(emptyList())
+    }
+
+    fun saveApiProfiles(profiles: List<ApiProfile>) {
+        val arr = JSONArray()
+        profiles.forEach { arr.put(it.toJson()) }
+        sp.edit().putString("api_profiles", arr.toString()).apply()
+    }
+
     var seeded: Boolean
         get() = sp.getBoolean("seeded", false)
         set(value) { sp.edit().putBoolean("seeded", value).apply() }

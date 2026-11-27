@@ -8,10 +8,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -74,6 +78,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import androidx.compose.runtime.collectAsState
 import com.xiaocheng.app.MainViewModel
+import com.xiaocheng.app.data.AiProviders
 import com.xiaocheng.app.data.ScheduleEvent
 import com.xiaocheng.app.ui.CircleIcon
 import com.xiaocheng.app.ui.SectionHeader
@@ -176,7 +181,7 @@ fun ProfileScreen(vm: MainViewModel) {
         SettingRow(
             icon = Icons.Filled.Build,
             title = "功能设置",
-            subtitle = "模式、额度、要求",
+            subtitle = "模式、要求",
             onClick = { showFeatures = true },
         )
 
@@ -216,7 +221,7 @@ fun ProfileScreen(vm: MainViewModel) {
         SettingRow(
             icon = Icons.Filled.Refresh,
             title = "检查更新",
-            subtitle = "当前 1.3.1",
+            subtitle = "当前 1.4.0",
             onClick = { vm.checkForUpdates() },
         )
         Spacer(Modifier.height(30.dp))
@@ -239,7 +244,14 @@ fun ProfileScreen(vm: MainViewModel) {
         ApiDialog(vm, onDismiss = { showApi = false })
     }
     if (showFeatures) {
-        FeatureSettingsDialog(vm, onDismiss = { showFeatures = false })
+        FeatureSettingsDialog(
+            vm,
+            onDismiss = { showFeatures = false },
+            onOpenAiConfig = {
+                showFeatures = false
+                showApi = true
+            },
+        )
     }
     if (vm.updateCheck.show) {
         UpdateCheckDialog(vm, context)
@@ -427,74 +439,216 @@ private fun NameDialog(current: String, onDismiss: () -> Unit, onSave: (String) 
 }
 
 @Composable
+private fun AppSheet(
+    title: String,
+    onDismiss: () -> Unit,
+    body: @Composable ColumnScope.() -> Unit,
+    footer: @Composable RowScope.() -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.94f).padding(horizontal = 14.dp).imePadding(),
+            shape = RoundedCornerShape(28.dp),
+            color = Paper,
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 22.dp, end = 16.dp, top = 18.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(title, style = MaterialTheme.typography.headlineSmall)
+                }
+                Column(
+                    modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) { body() }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.End,
+                ) { footer() }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
 private fun ApiDialog(vm: MainViewModel, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val activeSaved = vm.apiProfiles.firstOrNull { it.id == vm.activeProfileId }
     var base by remember { mutableStateOf(vm.apiBase) }
     var key by remember { mutableStateOf(vm.apiKey) }
     var model by remember { mutableStateOf(vm.apiModel) }
+    var selectedRecommended by remember {
+        mutableStateOf<String?>(if (activeSaved == null) AiProviders.match(vm.apiBase, vm.apiModel)?.id ?: "custom" else null)
+    }
+    var editingId by remember { mutableStateOf<String?>(activeSaved?.id) }
+    var auto by remember { mutableStateOf(vm.autoApi) }
+    val selectedProvider = AiProviders.all.firstOrNull { it.id == selectedRecommended }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("AI 配置") },
-        text = {
-            Column(
-                modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    "兼容 OpenAI 接口，Key 只存本机。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Muted,
-                )
-                OutlinedTextField(
-                    value = base,
-                    onValueChange = { base = it },
-                    label = { Text("接口地址") },
-                    placeholder = { Text("https://api.deepseek.com/v1") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Pine, unfocusedBorderColor = Line, cursorColor = Pine),
-                )
-                OutlinedTextField(
-                    value = model,
-                    onValueChange = { model = it },
-                    label = { Text("模型名称") },
-                    placeholder = { Text("deepseek-chat") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Pine, unfocusedBorderColor = Line, cursorColor = Pine),
-                )
-                OutlinedTextField(
-                    value = key,
-                    onValueChange = { key = it },
-                    label = { Text("API Key") },
-                    placeholder = { Text("sk-…") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Pine, unfocusedBorderColor = Line, cursorColor = Pine),
-                )
-                Text(
-                    "不填 Key 就用本地规则。",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Muted,
-                )
-                if (vm.hasApiKey) {
-                    TextButton(onClick = { vm.clearApi(); onDismiss() }) {
-                        Text("清除已保存的 Key", color = Coral, fontSize = 13.sp)
+    AppSheet(
+        title = "AI 配置",
+        onDismiss = onDismiss,
+        body = {
+            Text("OpenAI 兼容，Key 只存本机。", style = MaterialTheme.typography.bodySmall, color = Muted)
+            if (vm.apiProfiles.any { it.apiKey.isNotBlank() }) {
+                Text("已保存", style = MaterialTheme.typography.titleSmall)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    vm.apiProfiles.filter { it.apiKey.isNotBlank() }.forEach { profile ->
+                        ProviderChip(profile.model.ifBlank { profile.name }, editingId == profile.id) {
+                            editingId = profile.id
+                            selectedRecommended = null
+                            base = profile.baseUrl
+                            model = profile.model
+                            key = profile.apiKey
+                        }
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = { vm.saveApi(base, key, model); onDismiss() }) {
-                Text("保存", color = Pine)
+            Text("推荐", style = MaterialTheme.typography.titleSmall)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                AiProviders.all.forEach { provider ->
+                    ProviderChip(provider.name, selectedRecommended == provider.id) {
+                        selectedRecommended = provider.id
+                        editingId = null
+                        base = provider.baseUrl
+                        model = provider.model
+                        key = vm.apiProfiles.firstOrNull { it.id == provider.id }?.apiKey.orEmpty()
+                    }
+                }
+                ProviderChip("自定义", selectedRecommended == "custom") {
+                    selectedRecommended = "custom"
+                    editingId = null
+                    base = ""
+                    model = ""
+                    key = ""
+                }
+            }
+            if (selectedProvider != null) {
+                Text(selectedProvider.note, style = MaterialTheme.typography.labelSmall, color = Muted)
+                TextButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(selectedProvider.keyUrl)))
+                        }
+                    },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+                ) { Text("申请 Key", color = Pine, fontSize = 12.sp) }
+            } else {
+                Text("可保存多个自定义接口。", style = MaterialTheme.typography.labelSmall, color = Muted)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("自动选择", style = MaterialTheme.typography.bodyMedium)
+                    Text("已保存 Key 间轮换，限流自动跳过", style = MaterialTheme.typography.labelSmall, color = Muted)
+                }
+                Switch(checked = auto, onCheckedChange = { auto = it })
+            }
+            Text("已保存 " + vm.savedApiCount + " 个", style = MaterialTheme.typography.labelSmall, color = Muted)
+            OutlinedTextField(
+                value = base,
+                onValueChange = {
+                    base = it
+                    if (selectedRecommended != "custom") {
+                        selectedRecommended = "custom"
+                        editingId = null
+                    }
+                },
+                label = { Text("接口地址") },
+                placeholder = { Text("https://api.deepseek.com/v1") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Pine, unfocusedBorderColor = Line, cursorColor = Pine),
+            )
+            OutlinedTextField(
+                value = model,
+                onValueChange = {
+                    model = it
+                    if (selectedRecommended != "custom") {
+                        selectedRecommended = "custom"
+                        editingId = null
+                    }
+                },
+                label = { Text("模型名称") },
+                placeholder = { Text("deepseek-chat") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Pine, unfocusedBorderColor = Line, cursorColor = Pine),
+            )
+            OutlinedTextField(
+                value = key,
+                onValueChange = { key = it },
+                label = { Text("API Key") },
+                placeholder = { Text("sk-…") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Pine, unfocusedBorderColor = Line, cursorColor = Pine),
+            )
+            Text("不填 Key 用本地规则。", style = MaterialTheme.typography.labelSmall, color = Muted)
+            if (editingId != null) {
+                TextButton(onClick = {
+                    val id = editingId ?: return@TextButton
+                    vm.deleteProfile(id)
+                    editingId = null
+                    selectedRecommended = "custom"
+                    base = ""
+                    model = ""
+                    key = ""
+                }) {
+                    Text("删除此配置", color = Coral, fontSize = 13.sp)
+                }
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        footer = {
+            TextButton(onClick = onDismiss) { Text("完成", color = Muted) }
+            Spacer(Modifier.width(6.dp))
+            Button(
+                onClick = {
+                    val id = vm.saveApi(base, key, model, editingId)
+                    if (id.isNotBlank()) {
+                        editingId = id
+                        selectedRecommended = null
+                    } else {
+                        editingId = null
+                    }
+                    if (auto != vm.autoApi) vm.setAutoApiEnabled(auto)
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Pine, contentColor = CardWhite),
+                shape = RoundedCornerShape(14.dp),
+            ) { Text("保存") }
+        },
     )
+}
+
+@Composable
+private fun ProviderChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.clickable(onClick = onClick),
+        shape = RoundedCornerShape(10.dp),
+        color = if (selected) Pine else CardWhite,
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) Pine else Line),
+    ) {
+        Text(
+            label,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = if (selected) CardWhite else Ink,
+        )
+    }
 }
 
 @Composable
@@ -578,7 +732,11 @@ private fun TransferSelectDialog(
 }
 
 @Composable
-private fun FeatureSettingsDialog(vm: MainViewModel, onDismiss: () -> Unit) {
+private fun FeatureSettingsDialog(
+    vm: MainViewModel,
+    onDismiss: () -> Unit,
+    onOpenAiConfig: () -> Unit,
+) {
     var mode by remember { mutableStateOf(vm.aiMode) }
     var auto by remember { mutableStateOf(vm.autoApplyActions) }
     var req by remember { mutableStateOf(vm.aiRequirements) }
@@ -604,6 +762,20 @@ private fun FeatureSettingsDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                     modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("AI 供应商", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                AiProviders.nameOf(vm.apiBase, vm.apiModel) +
+                                    (if (vm.autoApi) " · 自动选择" else "") +
+                                    " · " + if (vm.hasApiKey) "已配置" else "未配置",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Muted,
+                            )
+                        }
+                        TextButton(onClick = onOpenAiConfig) { Text("切换", color = Pine) }
+                    }
+
                     Text("AI 模式", style = MaterialTheme.typography.titleSmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ModeOption("经典", mode != "combined", true) { mode = "classic" }
@@ -656,29 +828,9 @@ private fun FeatureSettingsDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                         Text("修改后点「保存」生效。", style = MaterialTheme.typography.labelSmall, color = Muted)
                     }
 
-                    Text("API 额度", style = MaterialTheme.typography.titleSmall)
-                    val quotaText = when {
-                        vm.quotaState.loading -> "正在查询…"
-                        vm.quotaState.error != null -> "查询失败：" + vm.quotaState.error
-                        vm.quotaState.text.isNotBlank() -> vm.quotaState.text
-                        else -> "尚未查询"
+                    TextButton(onClick = { vm.testApi() }, enabled = vm.hasApiKey) {
+                        Text("测试当前 API", color = Pine)
                     }
-                    Text(quotaText, style = MaterialTheme.typography.bodySmall, color = if (vm.quotaState.error != null) Coral else Ink)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Button(
-                            onClick = { vm.refreshQuota() },
-                            enabled = vm.hasApiKey && !vm.quotaState.loading,
-                            colors = ButtonDefaults.buttonColors(containerColor = Pine, contentColor = CardWhite),
-                            shape = RoundedCornerShape(12.dp),
-                        ) { Text(if (vm.quotaState.loading) "查询中…" else "刷新额度") }
-                        Spacer(Modifier.width(8.dp))
-                        TextButton(onClick = { vm.testApi() }, enabled = vm.hasApiKey) { Text("测试连接", color = Pine) }
-                    }
-                    Text(
-                        "部分接口支持额度查询。",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Muted,
-                    )
                     Spacer(Modifier.height(6.dp))
                 }
                 Row(
@@ -753,13 +905,13 @@ private fun UpdateCheckDialog(vm: MainViewModel, context: Context) {
                     state.checking -> Text("检查中…", color = Muted)
                     state.error != null -> Text(state.error, color = Coral)
                     state.isNew -> {
-                        Text("当前 1.3.1 → v" + (state.latest ?: ""), style = MaterialTheme.typography.bodyMedium)
+                        Text("当前 1.4.0 → v" + (state.latest ?: ""), style = MaterialTheme.typography.bodyMedium)
                         if (state.notes.isNotBlank()) {
                             Spacer(Modifier.height(8.dp))
                             Text(state.notes.take(600), style = MaterialTheme.typography.bodySmall, color = Muted)
                         }
                     }
-                    else -> Text("当前已是最新版本 " + (state.latest ?: "1.3.1") + "。")
+                    else -> Text("当前已是最新版本 " + (state.latest ?: "1.4.0") + "。")
                 }
             }
         },

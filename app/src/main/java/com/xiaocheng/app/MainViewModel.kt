@@ -15,6 +15,8 @@ import com.xiaocheng.app.ai.ChatTurn
 import com.xiaocheng.app.ai.ExtractionService
 import com.xiaocheng.app.ai.LlmClient
 import com.xiaocheng.app.ai.LlmConfig
+import com.xiaocheng.app.data.AiProviders
+import com.xiaocheng.app.data.ApiProfile
 import com.xiaocheng.app.data.ExtractedEvent
 import com.xiaocheng.app.data.NoticeItem
 import com.xiaocheng.app.data.Prefs
@@ -119,6 +121,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var apiModel by mutableStateOf(prefs.apiModel)
         private set
+    var activeProfileId by mutableStateOf(prefs.activeProfileId)
+        private set
+    var apiProfiles by mutableStateOf(prefs.loadApiProfiles())
+        private set
+    var autoApi by mutableStateOf(prefs.autoApi)
+        private set
 
     var aiState by mutableStateOf(AiUiState())
         private set
@@ -154,8 +162,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var pendingDescriptions by mutableStateOf<List<String>>(emptyList())
         private set
 
-    val hasApiKey: Boolean get() = apiKey.isNotBlank()
+    val hasApiKey: Boolean
+        get() = apiKey.isNotBlank() || (autoApi && apiProfiles.any { it.apiKey.isNotBlank() })
     val effectiveLocal: Boolean get() = !hasApiKey || useLocalEngine
+    val savedApiCount: Int get() = apiProfiles.count { it.apiKey.isNotBlank() }
 
     init {
         repo.seedExamplesIfNeeded()
@@ -170,7 +180,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         toast = "已保存"
     }
 
-    fun saveApi(base: String, key: String, model: String) {
+    fun saveApi(base: String, key: String, model: String, profileId: String? = null): String {
         val hadKey = apiKey.isNotBlank()
         apiBase = base.trim().ifBlank { "https://api.deepseek.com/v1" }
         apiKey = key.trim()
@@ -178,7 +188,46 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         prefs.apiBase = apiBase
         prefs.apiKey = apiKey
         prefs.apiModel = apiModel
-        // 第一次接入 API 时默认仍用本地规则；用户主动打开开关才走大模型。
+
+        val provider = AiProviders.match(apiBase, apiModel)
+        val newId = when {
+            provider != null -> provider.id
+            !profileId.isNullOrBlank() && profileId.startsWith("custom-") -> profileId
+            else -> {
+                val existing = apiProfiles.firstOrNull {
+                    (it.id.startsWith("custom-") || it.id == "custom") &&
+                        it.baseUrl == apiBase && it.model == apiModel
+                }
+                existing?.id ?: ("custom-" + UUID.randomUUID().toString().take(8))
+            }
+        }
+        val name = provider?.name ?: apiModel.ifBlank { "自定义" }
+        val old = apiProfiles.firstOrNull { it.id == newId }
+        val others = apiProfiles.filter { it.id != newId }
+        if (apiKey.isBlank()) {
+            apiProfiles = others
+            activeProfileId = ""
+            prefs.activeProfileId = ""
+        } else {
+            apiProfiles = others + ApiProfile(
+                id = newId,
+                name = name,
+                baseUrl = apiBase,
+                model = apiModel,
+                apiKey = apiKey,
+                lastUsed = old?.lastUsed ?: 0L,
+                cooldownUntil = old?.cooldownUntil ?: 0L,
+                lastError = old?.lastError.orEmpty(),
+            )
+            activeProfileId = newId
+            prefs.activeProfileId = newId
+        }
+        prefs.saveApiProfiles(apiProfiles)
+        if (autoApi && apiProfiles.none { it.apiKey.isNotBlank() }) {
+            autoApi = false
+            prefs.autoApi = false
+        }
+
         if (!hadKey || apiKey.isBlank()) {
             useLocalEngine = true
             prefs.useLocalEngine = true
@@ -187,17 +236,124 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             aiMode = "classic"
             prefs.aiMode = aiMode
         }
-        toast = "已保存"
+        toast = if (apiKey.isBlank()) "已删除当前配置" else "已保存，可继续添加"
+        return if (apiKey.isBlank()) "" else newId
+    }
+
+    fun setAutoApiEnabled(enabled: Boolean) {
+        if (enabled && apiProfiles.none { it.apiKey.isNotBlank() }) {
+            toast = "先添加至少一个 API Key"
+            return
+        }
+        autoApi = enabled
+        prefs.autoApi = enabled
+        if (enabled) {
+            useLocalEngine = false
+            prefs.useLocalEngine = false
+            autoSelectIfNeeded()
+        }
+    }
+
+    fun keyForProvider(id: String): String =
+        apiProfiles.firstOrNull { it.id == id }?.apiKey.orEmpty()
+
+    fun autoSelectIfNeeded() {
+        if (!autoApi) return
+        val now = System.currentTimeMillis()
+        val candidates = apiProfiles.filter { it.apiKey.isNotBlank() }
+        if (candidates.isEmpty()) return
+        val available = candidates.filter { it.cooldownUntil <= now }
+        if (available.isEmpty()) return
+        val chosen = available.sortedWith(
+            compareBy<ApiProfile>(
+                { it.lastUsed },
+                { AiProviders.all.indexOfFirst { p -> p.id == it.id }.let { i -> if (i < 0) 99 else i } },
+            )
+        ).first()
+        apiBase = chosen.baseUrl
+        apiKey = chosen.apiKey
+        apiModel = chosen.model
+        prefs.apiBase = apiBase
+        prefs.apiKey = apiKey
+        prefs.apiModel = apiModel
+        activeProfileId = chosen.id
+        prefs.activeProfileId = chosen.id
+        val updated = chosen.copy(lastUsed = now)
+        apiProfiles = apiProfiles.map { if (it.id == updated.id) updated else it }
+        prefs.saveApiProfiles(apiProfiles)
+    }
+
+    fun markApiFailure(message: String?) {
+        if (!autoApi || message.isNullOrBlank()) return
+        val current = activeProfileId.ifBlank { AiProviders.match(apiBase, apiModel)?.id ?: "custom" }
+        val profile = apiProfiles.firstOrNull { it.id == current } ?: return
+        val lower = message.lowercase()
+        val quota = listOf("429", "402", "quota", "limit", "额度", "余额", "too many").any { it in lower }
+        val cooldown = if (quota) 6 * 60 * 60 * 1000L else 30 * 60 * 1000L
+        val updated = profile.copy(
+            cooldownUntil = System.currentTimeMillis() + cooldown,
+            lastError = message.take(120),
+        )
+        apiProfiles = apiProfiles.map { if (it.id == updated.id) updated else it }
+        prefs.saveApiProfiles(apiProfiles)
+    }
+
+    fun markApiSuccess() {
+        if (!autoApi) return
+        val current = activeProfileId.ifBlank { AiProviders.match(apiBase, apiModel)?.id ?: "custom" }
+        val profile = apiProfiles.firstOrNull { it.id == current } ?: return
+        if (profile.cooldownUntil == 0L && profile.lastError.isBlank()) return
+        val updated = profile.copy(cooldownUntil = 0L, lastError = "")
+        apiProfiles = apiProfiles.map { if (it.id == updated.id) updated else it }
+        prefs.saveApiProfiles(apiProfiles)
+    }
+
+    fun deleteProfile(id: String) {
+        if (id.isBlank()) return
+        apiProfiles = apiProfiles.filter { it.id != id }
+        prefs.saveApiProfiles(apiProfiles)
+        if (activeProfileId == id) {
+            activeProfileId = ""
+            prefs.activeProfileId = ""
+            apiKey = ""
+            prefs.apiKey = ""
+        }
+        if (autoApi && apiProfiles.any { it.apiKey.isNotBlank() }) {
+            autoSelectIfNeeded()
+        } else if (apiProfiles.none { it.apiKey.isNotBlank() }) {
+            autoApi = false
+            prefs.autoApi = false
+            useLocalEngine = true
+            prefs.useLocalEngine = true
+            aiMode = "classic"
+            prefs.aiMode = aiMode
+        }
+        toast = "已删除配置"
     }
 
     fun clearApi() {
+        val current = activeProfileId.ifBlank {
+            AiProviders.match(apiBase, apiModel)?.id
+                ?: apiProfiles.firstOrNull { it.baseUrl == apiBase && it.model == apiModel }?.id
+                ?: "custom"
+        }
         apiKey = ""
         prefs.apiKey = ""
+        activeProfileId = ""
+        prefs.activeProfileId = ""
+        apiProfiles = apiProfiles.filter { it.id != current }
+        prefs.saveApiProfiles(apiProfiles)
+        if (autoApi && apiProfiles.any { it.apiKey.isNotBlank() }) {
+            autoSelectIfNeeded()
+        } else {
+            autoApi = false
+            prefs.autoApi = false
+        }
         useLocalEngine = true
         prefs.useLocalEngine = true
         aiMode = "classic"
         prefs.aiMode = aiMode
-        toast = "已清除 API Key，将使用本地规则"
+        toast = "已删除当前 API 配置"
     }
 
     fun switchEngine(local: Boolean) {
@@ -270,7 +426,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             aiState = AiUiState(loading = true)
             try {
+                autoSelectIfNeeded()
                 val result = extractor.extract(text, forceLocal = effectiveLocal)
+                if (autoApi) {
+                    if (result.engine == "大模型") markApiSuccess() else result.warning?.let { markApiFailure(it) }
+                }
                 aiState = AiUiState(
                     engine = result.engine,
                     results = result.events,
@@ -293,8 +453,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             aiState = AiUiState(loading = true)
             try {
+                autoSelectIfNeeded()
                 val article = fetcher.fetchArticle(url)
                 val result = extractor.extract(article.text, titleHint = article.title, forceLocal = effectiveLocal)
+                if (autoApi) {
+                    if (result.engine == "大模型") markApiSuccess() else result.warning?.let { markApiFailure(it) }
+                }
                 aiState = AiUiState(
                     engine = result.engine,
                     results = result.events,
@@ -313,8 +477,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             aiState = AiUiState(loading = true, sourceLabel = item.title)
             try {
+                autoSelectIfNeeded()
                 val article = fetcher.fetchArticle(item.url)
                 val result = extractor.extract(article.text, titleHint = article.title)
+                if (autoApi) {
+                    if (result.engine == "大模型") markApiSuccess() else result.warning?.let { markApiFailure(it) }
+                }
                 aiState = AiUiState(
                     engine = result.engine,
                     results = result.events,
@@ -346,6 +514,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             viewModelScope.launch {
                 updateState = UpdateUiState(loading = true, url = url)
                 try {
+                    autoSelectIfNeeded()
                     val aiItems = llm.digestNotices(
                         llmConfig(),
                         url.ifBlank { "manual" },
@@ -355,6 +524,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         query,
                     )
                     if (aiItems.isEmpty()) throw IOException("没有从正文中整理出条目")
+                    if (autoApi) markApiSuccess()
                     val key = url.ifBlank { "manual" }
                     val keys = aiItems.map { it.title + "|" + it.url }.toSet()
                     val old = prefs.loadSnapshot(key)
@@ -373,6 +543,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
+                    markApiFailure(e.message)
                     updateState = UpdateUiState(url = url, error = e.message ?: "整理正文失败")
                 }
             }
@@ -381,6 +552,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             updateState = UpdateUiState(loading = true, url = url)
             try {
+                autoSelectIfNeeded()
                 var items: List<NoticeItem>
                 var engine = "网页解析"
                 var readerUsed = false
@@ -395,9 +567,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
+                            markApiFailure(e.message)
                             emptyList()
                         }
                         if (aiItems.isNotEmpty()) {
+                            if (autoApi) markApiSuccess()
                             items = aiItems
                             engine = "AI 整理"
                         } else {
@@ -450,11 +624,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             quotaState = QuotaUiState(loading = true)
             try {
+                autoSelectIfNeeded()
                 val text = llm.fetchBalance(llmConfig())
+                if (autoApi) markApiSuccess()
                 quotaState = QuotaUiState(text = text)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                markApiFailure(e.message)
                 quotaState = QuotaUiState(error = e.message ?: "额度查询失败")
             }
         }
@@ -467,10 +644,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             try {
+                autoSelectIfNeeded()
                 toast = llm.testConnection(llmConfig())
+                if (autoApi) markApiSuccess()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                markApiFailure(e.message)
                 toast = "连接失败：" + (e.message ?: "未知错误")
             }
         }
@@ -483,7 +663,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val current = runCatching {
                     getApplication<Application>().packageManager
                         .getPackageInfo(getApplication<Application>().packageName, 0).versionName
-                }.getOrNull() ?: "1.3.1"
+                }.getOrNull() ?: "1.4.0"
                 val info = updateChecker.check(current)
                 updateCheck = if (info == null) {
                     UpdateCheckState(show = true, latest = current)
@@ -679,7 +859,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val history = chatMessages.dropLast(1)
                     .filter { it.role == "user" || it.role == "assistant" }
                     .map { ChatTurn(it.role, it.content) }
+                autoSelectIfNeeded()
                 val raw = llm.chat(llmConfig(), buildChatSystemPrompt(now), history, userContent)
+                if (autoApi) markApiSuccess()
                 diag("模型原始", raw)
                 val json = runCatching { parseJsonObject(raw) }.getOrNull()
                 var reply = json?.optString("reply")?.trim().orEmpty().ifBlank { raw.trim() }
@@ -708,6 +890,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 throw e
             } catch (e: Exception) {
                 diag("错误", e.message ?: "对话失败")
+                markApiFailure(e.message)
                 chatError = e.message ?: "对话失败"
             } finally {
                 chatLoading = false
@@ -1090,8 +1273,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
 private const val DEFAULT_PERSONA = """你是「校程」的日程助手，说话简洁、可靠，像一位细心的同学。
 你可以正常聊天、解释、给建议，也可以整理校园通知、网页内容和日程的增删改查。
-用户可以明确要求“随机/示例/编一个”日程；这种情况可以生成，并在 reply 或 note 里注明“示例/随机”，不要拒绝。
-只有用户没有明确要求时，不要编造真实通知、链接、地点或截止时间；用户要求修改已有日程时，只能使用给定日程列表里的 id。
 对于过于复杂且与本应用无关的问题（例如完整解数学题、写长代码、代写论文），用一两句话礼貌拒绝，避免消耗 token；普通问好、闲聊、简单问答、随机日程可以正常完成。
 回答尽量短，优先通过 actions 完成操作，不要长篇解释。"""
 

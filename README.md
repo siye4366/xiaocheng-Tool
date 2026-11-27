@@ -11,7 +11,7 @@
 - 支持 Android 8.0（API 26）及以上
 - 安装包命名：xiaocheng-v版本号.apk；GitHub Release 标题：v版本号
 
-当前版本：1.3.1（versionCode 10301），版本规则见 [VERSIONING.md](VERSIONING.md)。
+当前版本：1.4.0（versionCode 10400），版本规则见 [VERSIONING.md](VERSIONING.md)。
 
 ## 界面
 
@@ -26,6 +26,7 @@
 ## 功能
 
 - 首页看板：按「今天 / 未到期 / 已到期」分组，今天在最上面；只统计今天内仍未到期的日程。
+- AI 供应商：个人页「AI 配置」内置智谱、DeepSeek、Groq、Gemini，也支持保存多个自定义接口；可开启自动选择在已保存 Key 间轮换。
 - 日程转移：个人页「导入 / 导出」可以选择日程导出为 JSON，导入时也可以选择保存哪些。
 - AI 修改预览：待确认的修改会显示标题、时间、地点和修改前后差异。
 - 键盘焦点：收起键盘或切换页面时自动取消输入焦点，不会反复拉起键盘。
@@ -61,7 +62,7 @@
 
 正式包：
 
-[dist/xiaocheng-v1.3.1.apk](dist/xiaocheng-v1.3.1.apk)
+[dist/xiaocheng-v1.4.0.apk](dist/xiaocheng-v1.4.0.apk)
 
 直接下载安装，需允许「安装未知来源应用」。Android 8.0 及以上。
 

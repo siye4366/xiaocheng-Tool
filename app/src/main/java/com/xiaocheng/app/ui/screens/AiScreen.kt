@@ -60,6 +60,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xiaocheng.app.MainViewModel
+import com.xiaocheng.app.data.AiProviders
 import com.xiaocheng.app.data.ExtractedEvent
 import com.xiaocheng.app.data.NoticeItem
 import com.xiaocheng.app.ui.CategoryBadge
@@ -113,7 +114,7 @@ private fun AiHeader(vm: MainViewModel) {
             val apiOn = vm.hasApiKey && (vm.aiMode == "combined" || !vm.useLocalEngine)
             EngineChip(
                 configured = apiOn,
-                model = vm.apiModel,
+                model = if (vm.autoApi) "自动 · " + AiProviders.nameOf(vm.apiBase, vm.apiModel) else vm.apiModel,
             )
             if (vm.aiMode != "combined") {
                 Spacer(Modifier.weight(1f))
